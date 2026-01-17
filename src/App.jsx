@@ -93,21 +93,35 @@ const App = () => {
         }
       }
     }, 60000); // Check every minute
-    
-    return () => {
-      clearInterval(sessionRefreshInterval);
-    };
 
-    // Setup realtime subscription
+    // Setup realtime subscription with proper status monitoring
     const channel = supabase
-      .channel('public:profiles')
+      .channel('public:profiles', {
+        config: {
+          broadcast: { self: true }, // Receive our own updates too
+        }
+      })
       .on('postgres_changes', 
-        { event: '*', schema: 'public', table: 'profiles' }, 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'profiles' 
+        }, 
         (payload) => {
-          console.log('Realtime update:', payload);
+          console.log('🔔 Realtime update received:', payload);
+          
           if (payload.eventType === 'INSERT') {
-            setEmployees(prev => [...prev, payload.new]);
+            console.log('➕ New employee added:', payload.new);
+            setEmployees(prev => {
+              // Check if already exists (avoid duplicates)
+              if (prev.find(emp => emp.id === payload.new.id)) {
+                return prev;
+              }
+              return [...prev, payload.new];
+            });
           } else if (payload.eventType === 'UPDATE') {
+            console.log('🔄 Employee updated:', payload.new.full_name, 'Status:', payload.new.status);
+            
             // Update employees list IMMEDIATELY when any profile is updated
             setEmployees(prev => {
               const updated = prev.map(emp => {
@@ -116,33 +130,36 @@ const App = () => {
                   const preservedAvatar = (payload.new.avatar_url && payload.new.avatar_url.trim() !== '') 
                     ? payload.new.avatar_url 
                     : emp.avatar_url;
-                  return { ...payload.new, avatar_url: preservedAvatar };
+                  const updatedEmp = { ...payload.new, avatar_url: preservedAvatar };
+                  console.log('✅ Updated employee in list:', updatedEmp.full_name, '→ Status:', updatedEmp.status);
+                  return updatedEmp;
                 }
                 return emp;
               });
               return updated;
             });
+            
             // If the update is for the current user, also update currentUser state
-            // This ensures sync when user changes status on another device/tab
-            // We use a function to get the latest currentUser value
             setCurrentUser(prev => {
               if (prev && payload.new.id === prev.id) {
-                // CRITICAL: Always preserve avatar_url - never lose it
-                // If payload has avatar_url, use it; otherwise keep the existing one
                 const preservedAvatar = (payload.new.avatar_url && payload.new.avatar_url.trim() !== '') 
                   ? payload.new.avatar_url 
                   : prev.avatar_url;
                 
-                return { 
+                const updatedUser = { 
                   ...prev, 
                   ...payload.new,
-                  avatar_url: preservedAvatar // Always preserve avatar
+                  avatar_url: preservedAvatar
                 };
+                console.log('✅ Updated current user:', updatedUser.full_name, '→ Status:', updatedUser.status);
+                return updatedUser;
               }
               return prev;
             });
           } else if (payload.eventType === 'DELETE') {
+            console.log('➖ Employee deleted:', payload.old);
             setEmployees(prev => prev.filter(emp => emp.id !== payload.old.id));
+            
             // If current user was deleted, log them out
             setCurrentUser(prev => {
               if (prev && payload.old.id === prev.id) {
@@ -155,9 +172,20 @@ const App = () => {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Realtime subscription ACTIVE - listening for changes');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Realtime subscription ERROR - check Supabase configuration');
+        } else if (status === 'TIMED_OUT') {
+          console.warn('⚠️ Realtime subscription TIMED OUT - retrying...');
+        } else {
+          console.log('🔄 Realtime subscription status:', status);
+        }
+      });
 
     return () => {
+      clearInterval(sessionRefreshInterval);
       supabase.removeChannel(channel);
     };
   }, []); // Empty dependency - subscription is set up once on mount
@@ -437,12 +465,14 @@ const App = () => {
       updated_at: new Date().toISOString()
     };
 
-    const { error } = await supabase
+    const { error, data } = await supabase
       .from('profiles')
       .update(updates)
-      .eq('id', currentUser.id);
+      .eq('id', currentUser.id)
+      .select(); // Select to ensure realtime triggers
 
     if (!error) {
+      console.log('✅ Status updated in database:', updates);
       // IMMEDIATE UPDATE: Update local state immediately for instant UI feedback
       const updatedUser = { ...currentUser, ...updates };
       setCurrentUser(updatedUser);
