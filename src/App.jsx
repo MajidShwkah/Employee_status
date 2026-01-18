@@ -805,80 +805,67 @@ const App = () => {
     if (!time || time === 'Expired') return null;
     
     return (
-      <div className="flex items-center gap-1 text-sm font-semibold">
-        <Clock className="w-4 h-4" />
+      <div className="flex items-center gap-1 text-xs font-semibold">
+        <Clock className="w-3 h-3" />
         {time}
       </div>
     );
   };
 
-  // Employee Card Component - Enhanced Design
+  // Employee Card Component - Compact Design
   const EmployeeCard = ({ employee }) => {
     const isFree = employee.status === 'free';
-    const avatarUrl = employee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(employee.full_name)}&background=4F46E5&color=fff&size=128`;
+    const avatarUrl = employee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(employee.full_name)}&background=4F46E5&color=fff&size=64`;
 
     return (
       <div 
         className={`
-          group relative overflow-hidden rounded-2xl p-6 transition-all duration-500 transform hover:scale-105 hover:shadow-2xl
+          group relative overflow-hidden rounded-xl p-4 transition-all duration-300 transform hover:scale-105 hover:shadow-xl
           ${isFree 
-            ? 'bg-gradient-to-br from-emerald-500 via-green-500 to-teal-500 shadow-xl shadow-green-500/50' 
-            : 'bg-gradient-to-br from-rose-500 via-red-500 to-pink-500 shadow-xl shadow-red-500/50 opacity-90'
+            ? 'bg-gradient-to-br from-emerald-500 via-green-500 to-teal-500 shadow-lg shadow-green-500/30' 
+            : 'bg-gradient-to-br from-rose-500 via-red-500 to-pink-500 shadow-lg shadow-red-500/30 opacity-90'
           }
         `}
       >
-        {/* Animated background pattern */}
-        <div className="absolute inset-0 opacity-10">
-          <div className="absolute inset-0" style={{
-            backgroundImage: 'radial-gradient(circle at 2px 2px, white 1px, transparent 0)',
-            backgroundSize: '24px 24px'
-          }}></div>
-        </div>
-
-        <div className="relative flex flex-col items-center text-white">
-          {/* Avatar with glow effect */}
-          <div className={`relative mb-4 ${isFree ? 'animate-pulse-slow' : ''}`}>
-            <div className={`absolute inset-0 rounded-full ${isFree ? 'bg-green-400' : 'bg-red-400'} blur-xl opacity-50`}></div>
+        <div className="relative flex items-center gap-3 text-white">
+          {/* Avatar - smaller */}
+          <div className={`relative flex-shrink-0 ${isFree ? 'animate-pulse-slow' : ''}`}>
+            <div className={`absolute inset-0 rounded-full ${isFree ? 'bg-green-400' : 'bg-red-400'} blur-md opacity-40`}></div>
             <img 
               src={avatarUrl} 
               alt={employee.full_name}
-              className="relative w-28 h-28 rounded-full border-4 border-white shadow-2xl transform transition-transform group-hover:rotate-6"
+              className="relative w-16 h-16 rounded-full border-2 border-white shadow-lg"
             />
-            {/* Status indicator */}
-            <div className={`absolute bottom-0 right-0 w-6 h-6 rounded-full border-4 border-white ${isFree ? 'bg-green-400' : 'bg-red-400'} shadow-lg`}>
+            {/* Status indicator - smaller */}
+            <div className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border-2 border-white ${isFree ? 'bg-green-400' : 'bg-red-400'}`}>
               {isFree && <div className="w-full h-full rounded-full bg-green-400 animate-ping opacity-75"></div>}
             </div>
           </div>
 
-          <h3 className="text-2xl font-bold mb-3 text-center drop-shadow-lg">{employee.full_name}</h3>
-          
-          <div className={`
-            px-5 py-2 rounded-full text-sm font-bold mb-3 backdrop-blur-sm
-            ${isFree 
-              ? 'bg-white/30 text-white shadow-lg' 
-              : 'bg-black/30 text-white shadow-lg'
-            }
-          `}>
-            {isFree ? '✓ Available Now' : '✕ Currently Busy'}
-          </div>
-          
-          {employee.status_note && (
-            <div className="w-full mt-2">
-              <p className="text-sm text-center italic bg-black/30 backdrop-blur-sm px-4 py-2 rounded-xl border border-white/20">
+          {/* Name and status - compact */}
+          <div className="flex-1 min-w-0">
+            <h3 className="text-lg font-bold mb-1 truncate drop-shadow-sm">{employee.full_name}</h3>
+            <div className={`
+              inline-block px-3 py-1 rounded-full text-xs font-bold backdrop-blur-sm
+              ${isFree 
+                ? 'bg-white/30 text-white' 
+                : 'bg-black/30 text-white'
+              }
+            `}>
+              {isFree ? '✓ Available' : '✕ Busy'}
+            </div>
+            {employee.status_note && (
+              <p className="text-xs mt-1.5 text-white/90 truncate italic">
                 "{employee.status_note}"
               </p>
-            </div>
-          )}
-          
-          {!isFree && employee.busy_until && (
-            <div className="mt-3 bg-black/40 backdrop-blur-sm px-4 py-2 rounded-xl border border-white/20">
-              <Timer busyUntil={employee.busy_until} />
-            </div>
-          )}
+            )}
+            {!isFree && employee.busy_until && (
+              <div className="mt-1.5">
+                <Timer busyUntil={employee.busy_until} />
+              </div>
+            )}
+          </div>
         </div>
-
-        {/* Shine effect on hover */}
-        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
       </div>
     );
   };
@@ -897,9 +884,6 @@ const App = () => {
   // Public View - Enhanced Modern Design
   // This is a shared/public display - no login indicators shown
   if (view === 'public') {
-    const freeCount = employees.filter(e => e.status === 'free').length;
-    const busyCount = employees.filter(e => e.status === 'busy').length;
-    
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4 md:p-8">
         {/* Hidden admin access - only visible if admin is logged in and wants to access admin panel */}
@@ -925,63 +909,16 @@ const App = () => {
         <div className="max-w-7xl mx-auto relative z-10">
           {/* Header with stats */}
           <div className="mb-8">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-              <div>
-                <h1 className="text-5xl md:text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-indigo-400 mb-2">
-                  Team Status
-                </h1>
-                <p className="text-purple-200 text-lg">Real-time employee availability</p>
-              </div>
-              {/* Staff Login button - only visible, no logged-in user info shown */}
-              <button
-                onClick={() => setView('login')}
-                className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 flex items-center gap-2 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
-              >
-                <User className="w-5 h-5" />
-                Staff Login
-              </button>
+            <div className="mb-6">
+              <h1 className="text-5xl md:text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-indigo-400 mb-2">
+                Team Status
+              </h1>
             </div>
 
-            {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-              <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 shadow-xl">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-purple-200 text-sm font-medium">Total Team</p>
-                    <p className="text-3xl font-bold text-white mt-1">{employees.length}</p>
-                  </div>
-                  <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl flex items-center justify-center">
-                    <User className="w-6 h-6 text-white" />
-                  </div>
-                </div>
-              </div>
-              <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 shadow-xl">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-green-200 text-sm font-medium">Available</p>
-                    <p className="text-3xl font-bold text-white mt-1">{freeCount}</p>
-                  </div>
-                  <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-emerald-500 rounded-xl flex items-center justify-center">
-                    <div className="w-3 h-3 bg-white rounded-full animate-pulse"></div>
-                  </div>
-                </div>
-              </div>
-              <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 shadow-xl">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-red-200 text-sm font-medium">Busy</p>
-                    <p className="text-3xl font-bold text-white mt-1">{busyCount}</p>
-                  </div>
-                  <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-rose-500 rounded-xl flex items-center justify-center">
-                    <Clock className="w-6 h-6 text-white" />
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
           
-          {/* Employee Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          {/* Employee Cards Grid - More compact */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
             {employees.length === 0 ? (
               <div className="col-span-full text-center py-20">
                 <div className="text-purple-300 text-xl">No employees found</div>
