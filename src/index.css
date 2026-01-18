@@ -61,3 +61,16 @@
 .animate-pulse-slow {
   animation: pulse-slow 3s ease-in-out infinite;
 }
+
+/* Company template - Light beige background */
+.bg-gradient-image {
+  background: #F8F5EF;
+  position: relative;
+  min-height: 100vh;
+}
+
+.bg-gradient-image-static {
+  background: #F8F5EF;
+  position: relative;
+  min-height: 100vh;
+}

@@ -12,7 +12,7 @@ This is the **easiest and recommended** way - your app handles everything automa
 
 1. **Login as Admin**
    - Go to your app: http://localhost:5173/
-   - Click "Staff Login"
+   - Click "Settings"
    - Login with your admin account
 
 2. **Access Admin Panel**
