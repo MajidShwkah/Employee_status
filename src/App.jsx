@@ -909,10 +909,17 @@ const App = () => {
         <div className="max-w-7xl mx-auto relative z-10">
           {/* Header with stats */}
           <div className="mb-8">
-            <div className="mb-6">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
               <h1 className="text-5xl md:text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-indigo-400 mb-2">
                 Team Status
               </h1>
+              <button
+                onClick={() => setView('login')}
+                className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 flex items-center gap-2 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+              >
+                <User className="w-5 h-5" />
+                Staff Login
+              </button>
             </div>
 
           </div>
