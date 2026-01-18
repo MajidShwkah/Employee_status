@@ -2,6 +2,28 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Scrolling text animation for status notes (news ticker effect) */
+@keyframes scroll-text {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-50%));
+  }
+}
+
+.animate-scroll-text {
+  animation: scroll-text 15s linear infinite;
+  display: inline-block;
+  will-change: transform;
+  white-space: nowrap;
+}
+
+/* Pause on hover */
+.animate-scroll-text:hover {
+  animation-play-state: paused;
+}
+
 /* Custom animations */
 @keyframes blob {
   0%, 100% {

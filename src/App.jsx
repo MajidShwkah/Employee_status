@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { Clock, User, Plus, Trash2, Edit2, LogOut, Eye, EyeOff, Settings, Upload, Save, X } from 'lucide-react';
+import { Clock, User, Plus, Trash2, Edit2, LogOut, Eye, EyeOff, Settings, Upload, Save, X, MessageSquare } from 'lucide-react';
 
 // Simple password hashing using Web Crypto API
 const hashPassword = async (password) => {
@@ -67,6 +67,12 @@ const App = () => {
     role: 'employee'
   });
 
+  // Notification state
+  const [notification, setNotification] = useState(null);
+  
+  // Notes gallery state
+  const [currentNoteIndex, setCurrentNoteIndex] = useState(0);
+
   // Initialize and setup realtime subscription
   useEffect(() => {
     // Only check user on mount, not on every render
@@ -122,8 +128,33 @@ const App = () => {
           } else if (payload.eventType === 'UPDATE') {
             console.log('🔄 Employee updated:', payload.new.full_name, 'Status:', payload.new.status);
             
-            // Update employees list IMMEDIATELY when any profile is updated
+            // Find the previous state to detect changes
             setEmployees(prev => {
+              const oldEmp = prev.find(emp => emp.id === payload.new.id);
+              
+              // Check if status changed
+              if (oldEmp && oldEmp.status !== payload.new.status) {
+                const statusEmoji = payload.new.status === 'free' ? '✅' : '🔴';
+                setNotification({
+                  type: 'status',
+                  message: `${payload.new.full_name} is now ${payload.new.status === 'free' ? 'Available' : 'Busy'}`,
+                  emoji: statusEmoji,
+                  name: payload.new.full_name,
+                  status: payload.new.status
+                });
+              }
+              
+              // Check if status note changed (and is not empty)
+              if (oldEmp && oldEmp.status_note !== payload.new.status_note && payload.new.status_note) {
+                setNotification({
+                  type: 'note',
+                  message: `${payload.new.full_name} says: "${payload.new.status_note}"`,
+                  emoji: '💬',
+                  name: payload.new.full_name,
+                  note: payload.new.status_note
+                });
+              }
+              
               const updated = prev.map(emp => {
                 if (emp.id === payload.new.id) {
                   // Preserve avatar_url if it's missing in the update
@@ -189,6 +220,28 @@ const App = () => {
       supabase.removeChannel(channel);
     };
   }, []); // Empty dependency - subscription is set up once on mount
+
+  // Auto-dismiss notifications after 5 seconds
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => {
+        setNotification(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
+
+  // Auto-cycle through notes gallery every 5 seconds
+  useEffect(() => {
+    const employeesWithNotes = employees.filter(emp => emp.status_note && emp.status_note.trim() !== '');
+    if (employeesWithNotes.length <= 1) return;
+    
+    const interval = setInterval(() => {
+      setCurrentNoteIndex(prev => (prev + 1) % employeesWithNotes.length);
+    }, 5000); // Change note every 5 seconds
+    
+    return () => clearInterval(interval);
+  }, [employees]);
 
   // Check if user is logged in (from localStorage) with session expiration
   const checkUser = async () => {
@@ -953,9 +1006,19 @@ const App = () => {
               {isFree ? '✓ Available' : '✕ Busy'}
             </div>
             {employee.status_note && (
-              <p className="text-xs mt-1.5 text-white/90 truncate italic">
-                "{employee.status_note}"
-              </p>
+              <div className="mt-2 w-full overflow-hidden relative" style={{ height: '24px' }}>
+                <div className="whitespace-nowrap overflow-hidden w-full h-full relative">
+                  {employee.status_note.length > 30 ? (
+                    <p className="text-xs text-white font-medium px-2 py-1 bg-black/40 backdrop-blur-sm rounded border border-white/30 inline-block animate-scroll-text">
+                      "{employee.status_note}" • "{employee.status_note}" • 
+                    </p>
+                  ) : (
+                    <p className="text-xs text-white font-medium px-2 py-1 bg-black/40 backdrop-blur-sm rounded border border-white/30 inline-block">
+                      "{employee.status_note}"
+                    </p>
+                  )}
+                </div>
+              </div>
             )}
             {!isFree && employee.busy_until && (
               <div className="mt-1.5">
@@ -979,11 +1042,63 @@ const App = () => {
     );
   }
 
+  // Notification Component - Big and Prominent
+  const Notification = ({ notification, onClose }) => {
+    if (!notification) return null;
+    
+    return (
+      <div className="fixed top-8 left-1/2 transform -translate-x-1/2 z-[100] animate-in slide-in-from-top-5 duration-500">
+        <div className={`
+          px-10 py-8 rounded-3xl shadow-2xl backdrop-blur-xl border-3
+          ${notification.type === 'status' 
+            ? notification.status === 'free'
+              ? 'bg-gradient-to-r from-emerald-500/95 to-green-500/95 border-emerald-400 shadow-emerald-500/50'
+              : 'bg-gradient-to-r from-rose-500/95 to-red-500/95 border-rose-400 shadow-rose-500/50'
+            : 'bg-gradient-to-r from-indigo-500/95 to-purple-500/95 border-indigo-400 shadow-indigo-500/50'
+          }
+          text-white max-w-3xl w-full mx-4
+        `}>
+          <div className="flex items-start justify-between gap-6">
+            <div className="flex-1">
+              <div className="flex items-center gap-4 mb-3">
+                <span className="text-5xl">{notification.emoji}</span>
+                <h3 className="text-3xl font-extrabold">{notification.name}</h3>
+              </div>
+              {notification.type === 'note' ? (
+                <div className="mt-4">
+                  <p className="text-2xl font-bold mb-3">says:</p>
+                  <div className="p-4 bg-white/25 rounded-xl border-2 border-white/40 backdrop-blur-sm">
+                    <p className="text-2xl font-semibold italic leading-relaxed">"{notification.note}"</p>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-2xl font-bold">{notification.message}</p>
+              )}
+            </div>
+            <button
+              onClick={onClose}
+              className="text-white/90 hover:text-white transition-colors flex-shrink-0"
+            >
+              <X className="w-7 h-7" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Public View - Enhanced Modern Design
   // This is a shared/public display - no login indicators shown
   if (view === 'public') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4 md:p-8">
+        {/* Notification */}
+        {notification && (
+          <Notification 
+            notification={notification} 
+            onClose={() => setNotification(null)}
+          />
+        )}
         {/* Hidden admin access - only visible if admin is logged in and wants to access admin panel */}
         {/* This is intentionally hidden to keep the public dashboard clean for shared screens */}
         {currentUser && currentUser.role === 'admin' && (
@@ -1008,22 +1123,69 @@ const App = () => {
           {/* Header with Logo and Title */}
           <div className="mb-8">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 flex-1">
                 {/* Logo */}
-                <div className="bg-white rounded-xl p-2 shadow-lg">
+                <div className="bg-white rounded-xl p-2 shadow-lg flex-shrink-0">
                   <img 
                     src="/Rime_logo.jpeg" 
                     alt="Rime Logo" 
                     className="h-12 md:h-16 w-auto object-contain"
                   />
                 </div>
-                <h1 className="text-5xl md:text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-indigo-400 mb-2">
-                  Team Status
-                </h1>
+                
+                {/* Notes Gallery - Next to logo, takes long width */}
+                {(() => {
+                  const employeesWithNotes = employees.filter(emp => emp.status_note && emp.status_note.trim() !== '');
+                  if (employeesWithNotes.length === 0) return null;
+                  
+                  const currentEmployee = employeesWithNotes[currentNoteIndex % employeesWithNotes.length];
+                  
+                  return (
+                    <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-5 border-2 border-white/30 shadow-2xl flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <MessageSquare className="w-6 h-6 text-purple-300" />
+                          <span className="text-lg font-bold text-purple-100">Status Updates</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => setCurrentNoteIndex(prev => (prev - 1 + employeesWithNotes.length) % employeesWithNotes.length)}
+                            className="px-3 py-2 text-white/90 hover:text-white hover:bg-white/20 rounded-lg transition-all text-lg font-bold"
+                          >
+                            ←
+                          </button>
+                          <span className="text-sm text-purple-200 font-semibold">
+                            {currentNoteIndex % employeesWithNotes.length + 1} / {employeesWithNotes.length}
+                          </span>
+                          <button
+                            onClick={() => setCurrentNoteIndex(prev => (prev + 1) % employeesWithNotes.length)}
+                            className="px-3 py-2 text-white/90 hover:text-white hover:bg-white/20 rounded-lg transition-all text-lg font-bold"
+                          >
+                            →
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <img 
+                          src={currentEmployee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentEmployee.full_name)}&background=4F46E5&color=fff&size=128`}
+                          alt={currentEmployee.full_name}
+                          className="w-16 h-16 rounded-full border-2 border-white/40 shadow-lg flex-shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xl font-extrabold text-white mb-1.5 truncate">{currentEmployee.full_name}</p>
+                          <p className="text-2xl md:text-3xl font-bold text-purple-50 leading-relaxed">
+                            "{currentEmployee.status_note}"
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
+              
               <button
                 onClick={() => setView('login')}
-                className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 flex items-center gap-2 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+                className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 flex items-center gap-2 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 flex-shrink-0"
               >
                 <User className="w-5 h-5" />
                 Staff Login
