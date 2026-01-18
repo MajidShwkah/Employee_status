@@ -8,7 +8,7 @@ After logging in as an employee, you'll see the **Employee Control Panel**. Here
 
 ### Step 1: Access the Control Panel
 - After logging in, you should automatically see the **Employee Control Panel**
-- If you see the public dashboard, click **"Staff Login"** and log in
+- If you see the public dashboard, click **"Settings"** and log in
 
 ### Step 2: Change Your Status
 

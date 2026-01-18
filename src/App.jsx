@@ -134,11 +134,16 @@ const App = () => {
               
               // Check if status changed
               if (oldEmp && oldEmp.status !== payload.new.status) {
-                const statusEmoji = payload.new.status === 'free' ? '✅' : '🔴';
+                const statusConfig = {
+                  'free': { emoji: '✅', label: 'Available' },
+                  'busy': { emoji: '🔴', label: 'Busy' },
+                  'important': { emoji: '⚠️', label: 'Important' }
+                };
+                const config = statusConfig[payload.new.status] || { emoji: '🔄', label: payload.new.status };
                 setNotification({
                   type: 'status',
-                  message: `${payload.new.full_name} is now ${payload.new.status === 'free' ? 'Available' : 'Busy'}`,
-                  emoji: statusEmoji,
+                  message: `${payload.new.full_name} is now ${config.label}`,
+                  emoji: config.emoji,
                   name: payload.new.full_name,
                   status: payload.new.status
                 });
@@ -243,6 +248,52 @@ const App = () => {
     return () => clearInterval(interval);
   }, [employees]);
 
+  // Auto-update status to 'free' when busy timer expires
+  // Only applies to employees who set a timer (have busy_until set)
+  useEffect(() => {
+    const checkExpiredTimers = async () => {
+      const now = Date.now();
+      
+      // Check all employees with busy status and busy_until set
+      // Only auto-update if they have a timer (busy_until is set)
+      const expiredEmployees = employees.filter(emp => {
+        if (emp.status !== 'busy' || !emp.busy_until) return false;
+        const busyUntil = new Date(emp.busy_until).getTime();
+        return busyUntil <= now;
+      });
+
+      // Auto-update expired timers to 'free'
+      for (const emp of expiredEmployees) {
+        console.log(`⏰ Timer expired for ${emp.full_name}, auto-setting to free`);
+        
+        // Update via Supabase - this will trigger realtime updates for all clients
+        const { error } = await supabase
+          .from('profiles')
+          .update({
+            status: 'free',
+            status_note: null,
+            busy_until: null,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', emp.id);
+        
+        if (error) {
+          console.error(`Error auto-updating ${emp.full_name} to free:`, error);
+        } else {
+          console.log(`✅ Auto-updated ${emp.full_name} to free`);
+        }
+      }
+    };
+
+    // Check every 10 seconds for expired timers
+    const interval = setInterval(checkExpiredTimers, 10000);
+    
+    // Also check immediately
+    checkExpiredTimers();
+    
+    return () => clearInterval(interval);
+  }, [employees]); // Re-run when employees list changes
+
   // Check if user is logged in (from localStorage) with session expiration
   const checkUser = async () => {
     const savedUserId = localStorage.getItem('currentUserId');
@@ -330,7 +381,7 @@ const App = () => {
         setStatusNote(currentUser.status_note);
       }
       
-      // Calculate and sync busy duration if user is busy
+      // Calculate and sync busy duration if user is busy (not for important)
       if (currentUser.status === 'busy' && currentUser.busy_until) {
         const busyUntil = new Date(currentUser.busy_until).getTime();
         const now = Date.now();
@@ -536,8 +587,8 @@ const App = () => {
 
     const updates = {
       status,
-      status_note: status === 'free' ? null : statusNote, // Clear status_note when setting to free
-      busy_until: status === 'busy' ? new Date(Date.now() + durationMinutes * 60000).toISOString() : null,
+      status_note: status === 'free' ? null : statusNote, // Clear status_note only when setting to free
+      busy_until: status === 'busy' ? new Date(Date.now() + durationMinutes * 60000).toISOString() : null, // Only set timer for busy status
       updated_at: new Date().toISOString()
     };
 
@@ -942,6 +993,20 @@ const App = () => {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
+  // Get time remaining in MM:SS format for inline display (e.g., "10:25")
+  const getTimeRemainingFormatted = (busyUntil) => {
+    if (!busyUntil) return null;
+    const now = Date.now();
+    const end = new Date(busyUntil).getTime();
+    const diff = end - now;
+    
+    if (diff <= 0) return null; // Don't show expired timer inline
+    
+    const minutes = Math.floor(diff / 60000);
+    const seconds = Math.floor((diff % 60000) / 1000);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
   // Timer component
   const Timer = ({ busyUntil }) => {
     const [time, setTime] = useState(getTimeRemaining(busyUntil));
@@ -953,90 +1018,154 @@ const App = () => {
       return () => clearInterval(interval);
     }, [busyUntil]);
 
-    if (!time || time === 'Expired') return null;
+    if (!time) return null;
+    
+    // Handle expired state
+    if (time === 'Expired') {
+      return (
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-white/80">
+          <Clock className="w-3.5 h-3.5 opacity-60" />
+          <span className="italic">Time expired</span>
+        </div>
+      );
+    }
     
     return (
-      <div className="flex items-center gap-1 text-xs font-semibold">
-        <Clock className="w-3 h-3" />
-        {time}
+      <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+        <Clock className="w-3.5 h-3.5" />
+        <span>{time}</span>
       </div>
     );
   };
 
-  // Employee Card Component - Compact Design
+  // Employee Card Component - Modern Design with Full Color Background
   const EmployeeCard = ({ employee }) => {
     const isFree = employee.status === 'free';
+    const isImportant = employee.status === 'important';
     const avatarUrl = employee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(employee.full_name)}&background=4F46E5&color=fff&size=64`;
+    
+    // Real-time timer state for inline display (MM:SS format)
+    const [timerFormatted, setTimerFormatted] = useState(() => {
+      if (!isFree && !isImportant && employee.busy_until) {
+        return getTimeRemainingFormatted(employee.busy_until);
+      }
+      return null;
+    });
+
+    // Update timer every second for accurate countdown
+    useEffect(() => {
+      if (!isFree && !isImportant && employee.busy_until) {
+        const interval = setInterval(() => {
+          const timeRemaining = getTimeRemainingFormatted(employee.busy_until);
+          setTimerFormatted(timeRemaining);
+        }, 1000); // Update every second
+        
+        // Also update immediately
+        setTimerFormatted(getTimeRemainingFormatted(employee.busy_until));
+        
+        return () => clearInterval(interval);
+      } else {
+        setTimerFormatted(null);
+      }
+    }, [employee.busy_until, isFree, isImportant]);
+
+    // Determine status colors
+    const getStatusColors = () => {
+      if (isFree) {
+        return {
+          bg: 'bg-[#166534]',
+          bgGradient: 'bg-gradient-to-br from-[#166534] to-[#15803d]',
+          shadow: 'shadow-lg shadow-[#166534]/40',
+          glow: 'bg-[#166534]',
+          indicator: 'bg-white',
+          badge: 'bg-white/20 backdrop-blur-sm text-white border border-white/30',
+          label: '✓ Available',
+          text: 'text-white'
+        };
+      } else if (isImportant) {
+        return {
+          bg: 'bg-[#f97316]',
+          bgGradient: 'bg-gradient-to-br from-[#f97316] to-[#ea580c]',
+          shadow: 'shadow-lg shadow-[#f97316]/40',
+          glow: 'bg-[#f97316]',
+          indicator: 'bg-white',
+          badge: 'bg-white/20 backdrop-blur-sm text-white border border-white/30',
+          label: '⚠ Important',
+          text: 'text-white'
+        };
+      } else {
+        return {
+          bg: 'bg-[#991b1b]',
+          bgGradient: 'bg-gradient-to-br from-[#991b1b] to-[#7f1d1d]',
+          shadow: 'shadow-lg shadow-[#991b1b]/40',
+          glow: 'bg-[#991b1b]',
+          indicator: 'bg-white',
+          badge: 'bg-white/20 backdrop-blur-sm text-white border border-white/30',
+          label: '✕ Busy',
+          text: 'text-white'
+        };
+      }
+    };
+
+    const statusColors = getStatusColors();
 
     return (
       <div 
         className={`
-          group relative overflow-hidden rounded-xl p-4 transition-all duration-300 transform hover:scale-105 hover:shadow-xl
-          ${isFree 
-            ? 'bg-gradient-to-br from-emerald-500 via-green-500 to-teal-500 shadow-lg shadow-green-500/30' 
-            : 'bg-gradient-to-br from-rose-500 via-red-500 to-pink-500 shadow-lg shadow-red-500/30 opacity-90'
-          }
+          group relative overflow-hidden rounded-2xl p-5 transition-all duration-300 transform hover:scale-[1.02] hover:shadow-2xl
+          ${statusColors.bgGradient} ${statusColors.shadow}
+          border-0
         `}
       >
-        <div className="relative flex items-center gap-3 text-white">
-          {/* Avatar - smaller */}
+        {/* Decorative gradient overlay */}
+        <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-50"></div>
+        
+        {/* Content */}
+        <div className="relative flex items-center gap-3">
+          {/* Avatar with glow effect */}
           <div className={`relative flex-shrink-0 ${isFree ? 'animate-pulse-slow' : ''}`}>
-            <div className={`absolute inset-0 rounded-full ${isFree ? 'bg-green-400' : 'bg-red-400'} blur-md opacity-40`}></div>
+            <div className={`absolute inset-0 rounded-full ${statusColors.glow} blur-xl opacity-60`}></div>
             <img 
               src={avatarUrl} 
               alt={employee.full_name}
-              className="relative w-16 h-16 rounded-full border-2 border-white shadow-lg"
+              className="relative w-16 h-16 rounded-full border-2 border-white/50 shadow-xl"
             />
-            {/* Status indicator - smaller */}
-            <div className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border-2 border-white ${isFree ? 'bg-green-400' : 'bg-red-400'}`}>
-              {isFree && <div className="w-full h-full rounded-full bg-green-400 animate-ping opacity-75"></div>}
+            {/* Status indicator */}
+            <div className={`absolute bottom-0 right-0 w-5 h-5 rounded-full border-2 border-white ${statusColors.indicator} shadow-lg`}>
+              {isFree && <div className="w-full h-full rounded-full bg-white animate-ping opacity-75"></div>}
+              {isImportant && <div className="w-full h-full rounded-full bg-white animate-pulse opacity-75"></div>}
             </div>
           </div>
 
-          {/* Name and status - compact */}
+          {/* Name and Badge with Timer */}
           <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-bold mb-1 truncate drop-shadow-sm">{employee.full_name}</h3>
-            <div className={`
-              inline-block px-3 py-1 rounded-full text-xs font-bold backdrop-blur-sm
-              ${isFree 
-                ? 'bg-white/30 text-white' 
-                : 'bg-black/30 text-white'
-              }
-            `}>
-              {isFree ? '✓ Available' : '✕ Busy'}
+            <h3 className={`text-lg font-bold mb-2 truncate ${statusColors.text}`}>
+              {employee.full_name}
+            </h3>
+            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold ${statusColors.badge} shadow-sm`}>
+              <span>{statusColors.label}</span>
+              {!isFree && !isImportant && timerFormatted && (
+                <>
+                  <span className="text-white/70">-</span>
+                  <span className="text-white/90 font-mono">{timerFormatted}</span>
+                </>
+              )}
             </div>
-            {employee.status_note && (
-              <div className="mt-2 w-full overflow-hidden relative" style={{ height: '24px' }}>
-                <div className="whitespace-nowrap overflow-hidden w-full h-full relative">
-                  {employee.status_note.length > 30 ? (
-                    <p className="text-xs text-white font-medium px-2 py-1 bg-black/40 backdrop-blur-sm rounded border border-white/30 inline-block animate-scroll-text">
-                      "{employee.status_note}" • "{employee.status_note}" • 
-                    </p>
-                  ) : (
-                    <p className="text-xs text-white font-medium px-2 py-1 bg-black/40 backdrop-blur-sm rounded border border-white/30 inline-block">
-                      "{employee.status_note}"
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-            {!isFree && employee.busy_until && (
-              <div className="mt-1.5">
-                <Timer busyUntil={employee.busy_until} />
-              </div>
-            )}
           </div>
         </div>
+
+        {/* Corner accent */}
+        <div className="absolute top-0 right-0 w-20 h-20 bg-white/10 rounded-bl-full"></div>
       </div>
     );
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-image-static flex items-center justify-center">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <div className="text-purple-300 text-xl font-semibold">Loading...</div>
+          <div className="text-[#212121] text-xl font-semibold">Loading...</div>
         </div>
       </div>
     );
@@ -1052,9 +1181,11 @@ const App = () => {
           px-10 py-8 rounded-3xl shadow-2xl backdrop-blur-xl border-3
           ${notification.type === 'status' 
             ? notification.status === 'free'
-              ? 'bg-gradient-to-r from-emerald-500/95 to-green-500/95 border-emerald-400 shadow-emerald-500/50'
-              : 'bg-gradient-to-r from-rose-500/95 to-red-500/95 border-rose-400 shadow-rose-500/50'
-            : 'bg-gradient-to-r from-indigo-500/95 to-purple-500/95 border-indigo-400 shadow-indigo-500/50'
+              ? 'bg-[#166534] border-[#166534] shadow-[#166534]/50'
+              : notification.status === 'important'
+              ? 'bg-[#f97316] border-[#f97316] shadow-[#f97316]/50'
+              : 'bg-[#991b1b] border-[#991b1b] shadow-[#991b1b]/50'
+            : 'bg-white border border-gray-200'
           }
           text-white max-w-3xl w-full mx-4
         `}>
@@ -1091,7 +1222,7 @@ const App = () => {
   // This is a shared/public display - no login indicators shown
   if (view === 'public') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4 md:p-8">
+      <div className="min-h-screen bg-gradient-image-static p-4 md:p-8">
         {/* Notification */}
         {notification && (
           <Notification 
@@ -1105,106 +1236,130 @@ const App = () => {
           <div className="fixed top-2 right-2 z-50 opacity-0 hover:opacity-100 transition-opacity">
             <button
               onClick={() => setView('admin')}
-              className="px-3 py-1.5 bg-purple-600/20 text-purple-300 rounded-lg hover:bg-purple-600/40 text-xs border border-purple-500/30"
+              className="px-3 py-1.5 bg-[#212121] text-white rounded-lg hover:bg-[#212121]/90 text-xs border border-[#212121]"
               title="Admin Access"
             >
               Admin
             </button>
           </div>
         )}
-        {/* Animated background elements */}
-        <div className="fixed inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
-          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000"></div>
-          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-pink-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-4000"></div>
-        </div>
 
         <div className="max-w-7xl mx-auto relative z-10">
-          {/* Header with Logo and Title */}
-          <div className="mb-8">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-              <div className="flex items-center gap-4 flex-1">
-                {/* Logo */}
-                <div className="bg-white rounded-xl p-2 shadow-lg flex-shrink-0">
-                  <img 
-                    src="/Rime_logo.jpeg" 
-                    alt="Rime Logo" 
-                    className="h-12 md:h-16 w-auto object-contain"
-                  />
-                </div>
-                
-                {/* Notes Gallery - Next to logo, takes long width */}
-                {(() => {
-                  const employeesWithNotes = employees.filter(emp => emp.status_note && emp.status_note.trim() !== '');
-                  if (employeesWithNotes.length === 0) return null;
-                  
-                  const currentEmployee = employeesWithNotes[currentNoteIndex % employeesWithNotes.length];
-                  
-                  return (
-                    <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-5 border-2 border-white/30 shadow-2xl flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <MessageSquare className="w-6 h-6 text-purple-300" />
-                          <span className="text-lg font-bold text-purple-100">Status Updates</span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <button
-                            onClick={() => setCurrentNoteIndex(prev => (prev - 1 + employeesWithNotes.length) % employeesWithNotes.length)}
-                            className="px-3 py-2 text-white/90 hover:text-white hover:bg-white/20 rounded-lg transition-all text-lg font-bold"
-                          >
-                            ←
-                          </button>
-                          <span className="text-sm text-purple-200 font-semibold">
-                            {currentNoteIndex % employeesWithNotes.length + 1} / {employeesWithNotes.length}
-                          </span>
-                          <button
-                            onClick={() => setCurrentNoteIndex(prev => (prev + 1) % employeesWithNotes.length)}
-                            className="px-3 py-2 text-white/90 hover:text-white hover:bg-white/20 rounded-lg transition-all text-lg font-bold"
-                          >
-                            →
-                          </button>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <img 
-                          src={currentEmployee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentEmployee.full_name)}&background=4F46E5&color=fff&size=128`}
-                          alt={currentEmployee.full_name}
-                          className="w-16 h-16 rounded-full border-2 border-white/40 shadow-lg flex-shrink-0"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xl font-extrabold text-white mb-1.5 truncate">{currentEmployee.full_name}</p>
-                          <p className="text-2xl md:text-3xl font-bold text-purple-50 leading-relaxed">
-                            "{currentEmployee.status_note}"
-                          </p>
-                        </div>
-                      </div>
+          {/* Header - Organized Layout */}
+          <div className="mb-8 space-y-4">
+            {/* Top Row: Status Guide | Logo | Settings */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              {/* Status Guide - Left */}
+              <div className="bg-white rounded-xl p-3 md:p-4 border border-gray-200 shadow-sm order-2 sm:order-1">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  {/* Red - Busy */}
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded-full bg-[#991b1b] border-2 border-white shadow-sm flex-shrink-0"></div>
+                    <div className="text-xs md:text-sm text-[#212121] font-medium whitespace-nowrap">
+                      <span className="font-bold">Busy</span> - <span className="text-[#212121]/70">مشغول</span>
                     </div>
-                  );
-                })()}
+                  </div>
+                  {/* Green - Available */}
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded-full bg-[#166534] border-2 border-white shadow-sm flex-shrink-0"></div>
+                    <div className="text-xs md:text-sm text-[#212121] font-medium whitespace-nowrap">
+                      <span className="font-bold">Available</span> - <span className="text-[#212121]/70">متاح</span>
+                    </div>
+                  </div>
+                  {/* Orange - Important */}
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded-full bg-[#f97316] border-2 border-white shadow-sm flex-shrink-0"></div>
+                    <div className="text-xs md:text-sm text-[#212121] font-medium whitespace-nowrap">
+                      <span className="font-bold">Important Only</span> - <span className="text-[#212121]/70">متاح عند الضرورة فقط</span>
+                    </div>
+                  </div>
+                </div>
               </div>
               
+              {/* Logo - Center */}
+              <div className="bg-white rounded-xl p-2 shadow-sm order-1 sm:order-2">
+                <img 
+                  src="/Rime_logo.jpeg" 
+                  alt="Rime Logo" 
+                  className="h-12 md:h-16 w-auto object-contain"
+                />
+              </div>
+              
+              {/* Settings - Right */}
               <button
                 onClick={() => setView('login')}
-                className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 flex items-center gap-2 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 flex-shrink-0"
+                className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 flex items-center gap-2 shadow-sm transition-all duration-300 order-3"
               >
                 <User className="w-5 h-5" />
-                Staff Login
+                <span className="hidden sm:inline">Settings</span>
+                <span className="sm:hidden">Login</span>
               </button>
             </div>
 
+            {/* Bottom Row: Notes Gallery (Full Width) */}
+            {(() => {
+              const employeesWithNotes = employees.filter(emp => emp.status_note && emp.status_note.trim() !== '');
+              if (employeesWithNotes.length === 0) return null;
+              
+              const currentEmployee = employeesWithNotes[currentNoteIndex % employeesWithNotes.length];
+              
+              return (
+                <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-200 shadow-sm">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <MessageSquare className="w-5 h-5 md:w-6 md:h-6 text-[#212121]" />
+                      <span className="text-base md:text-lg font-bold text-[#212121]">Status Updates</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setCurrentNoteIndex(prev => (prev - 1 + employeesWithNotes.length) % employeesWithNotes.length)}
+                        className="px-3 py-2 text-[#212121] hover:text-[#212121] hover:bg-gray-100 rounded-lg transition-all text-lg font-bold"
+                      >
+                        ←
+                      </button>
+                      <span className="text-xs md:text-sm text-[#212121]/70 font-semibold">
+                        {currentNoteIndex % employeesWithNotes.length + 1} / {employeesWithNotes.length}
+                      </span>
+                      <button
+                        onClick={() => setCurrentNoteIndex(prev => (prev + 1) % employeesWithNotes.length)}
+                        className="px-3 py-2 text-[#212121] hover:text-[#212121] hover:bg-gray-100 rounded-lg transition-all text-lg font-bold"
+                      >
+                        →
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <img 
+                      src={currentEmployee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentEmployee.full_name)}&background=4F46E5&color=fff&size=128`}
+                      alt={currentEmployee.full_name}
+                      className="w-14 h-14 md:w-16 md:h-16 rounded-full border-2 border-white/40 shadow-lg flex-shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-lg md:text-xl font-extrabold text-[#212121] mb-1.5 truncate">{currentEmployee.full_name}</p>
+                      <p className="text-xl md:text-2xl lg:text-3xl font-bold text-[#212121] leading-relaxed">
+                        "{currentEmployee.status_note}"
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           
           {/* Employee Cards Grid - More compact */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
             {employees.length === 0 ? (
               <div className="col-span-full text-center py-20">
-                <div className="text-purple-300 text-xl">No employees found</div>
+                <div className="text-[#212121] text-xl">No employees found</div>
               </div>
             ) : (
               employees
                 .sort((a, b) => {
-                  if (a.status === 'free' && b.status !== 'free') return -1;
-                  if (a.status !== 'free' && b.status === 'free') return 1;
+                  // Sort: Important first, then Free, then Busy
+                  const statusOrder = { 'important': 0, 'free': 1, 'busy': 2 };
+                  const aOrder = statusOrder[a.status] ?? 3;
+                  const bOrder = statusOrder[b.status] ?? 3;
+                  if (aOrder !== bOrder) return aOrder - bOrder;
                   return a.full_name.localeCompare(b.full_name);
                 })
                 .map(emp => (
@@ -1220,48 +1375,48 @@ const App = () => {
   // Login View - Enhanced Design
   if (view === 'login') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
+      <div className="min-h-screen bg-gradient-image-static flex items-center justify-center p-4 relative overflow-hidden">
         {/* Animated background */}
         <div className="absolute inset-0 overflow-hidden">
           <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
           <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000"></div>
         </div>
         
-        <div className="bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/20 p-8 w-full max-w-md relative z-10">
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8 w-full max-w-md relative z-10">
           <div className="text-center mb-8">
-            <div className="w-20 h-20 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg">
+            <div className="w-20 h-20 bg-[#212121] rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg">
               <User className="w-10 h-10 text-white" />
             </div>
-            <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 mb-2">Staff Login</h2>
-            <p className="text-purple-200 text-sm">Enter your credentials to continue</p>
+            <h2 className="text-3xl font-bold text-[#212121] mb-2">Settings</h2>
+            <p className="text-[#212121]/70 text-sm">Enter your credentials to continue</p>
           </div>
           <div className="space-y-5">
             <div>
-              <label className="block text-sm font-medium text-purple-200 mb-2">Username</label>
+              <label className="block text-sm font-medium text-[#212121] mb-2">Username</label>
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-purple-300 focus:ring-2 focus:ring-purple-400 focus:border-purple-400 transition-all"
+                className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
                 placeholder="Enter your username"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-purple-200 mb-2">Password</label>
+              <label className="block text-sm font-medium text-[#212121] mb-2">Password</label>
               <div className="relative">
                 <input
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                  className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-purple-300 focus:ring-2 focus:ring-purple-400 focus:border-purple-400 transition-all pr-12"
+                  className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all pr-12"
                   placeholder="Enter your password"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-purple-300 hover:text-white transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#212121] hover:text-[#212121]/80 transition-colors"
                 >
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
@@ -1269,13 +1424,13 @@ const App = () => {
             </div>
             <button
               onClick={handleLogin}
-              className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 rounded-xl hover:from-indigo-700 hover:to-purple-700 font-semibold shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+              className="w-full bg-[#212121] text-white py-3 rounded-xl hover:bg-[#212121]/90 font-semibold shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
             >
               Sign In
             </button>
             <button
               onClick={() => setView('public')}
-              className="w-full bg-white/10 backdrop-blur-sm border border-white/20 text-purple-200 py-3 rounded-xl hover:bg-white/20 font-semibold transition-all"
+              className="w-full bg-white border border-gray-300 text-[#212121] py-3 rounded-xl hover:bg-gray-50 font-semibold transition-all"
             >
               Back to Dashboard
             </button>
@@ -1288,7 +1443,7 @@ const App = () => {
   // Employee Control Panel - Enhanced Design
   if (view === 'employee' && currentUser) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 p-4 md:p-8">
+      <div className="min-h-screen bg-gradient-image-static p-4 md:p-8">
         {/* Animated background */}
         <div className="fixed inset-0 overflow-hidden pointer-events-none">
           <div className="absolute -top-40 -right-40 w-80 h-80 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
@@ -1299,13 +1454,13 @@ const App = () => {
           {/* Header with session timer */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
             <div>
-              <h1 className="text-4xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 mb-2">
+              <h1 className="text-4xl md:text-5xl font-extrabold text-[#212121] mb-2">
                 Control Panel
               </h1>
               {sessionTimeLeft && (
-                <p className="text-indigo-300 text-sm flex items-center gap-2">
+                <p className="text-[#212121]/70 text-sm flex items-center gap-2">
                   <Clock className="w-4 h-4" />
-                  Session expires in: <span className="font-bold text-white">{sessionTimeLeft}</span>
+                  Session expires in: <span className="font-bold text-[#212121]">{sessionTimeLeft}</span>
                 </p>
               )}
             </div>
@@ -1313,14 +1468,14 @@ const App = () => {
               {currentUser?.role === 'admin' && (
                 <button
                   onClick={() => setView('admin')}
-                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:from-purple-700 hover:to-indigo-700 flex items-center gap-2 shadow-lg transition-all"
+                  className="px-4 py-2 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 flex items-center gap-2 shadow-sm transition-all"
                 >
                   Admin Panel
                 </button>
               )}
               <button
                 onClick={handleLogout}
-                className="px-4 py-2 bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-xl hover:from-red-700 hover:to-rose-700 flex items-center gap-2 shadow-lg transition-all"
+                className="px-4 py-2 bg-[#991b1b] text-white rounded-xl hover:bg-[#991b1b]/90 flex items-center gap-2 shadow-lg transition-all"
               >
                 <LogOut className="w-4 h-4" />
                 Logout
@@ -1328,30 +1483,45 @@ const App = () => {
             </div>
           </div>
 
-          <div className="bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/20 p-6 md:p-8">
+          <div className="bg-white rounded-3xl shadow-2xl border border-gray-200 p-6 md:p-8">
             {/* User Info Card */}
-            <div className="bg-gradient-to-br from-indigo-500/20 to-purple-500/20 backdrop-blur-sm rounded-2xl p-6 mb-6 border border-white/10">
+            <div className="bg-white rounded-2xl p-6 mb-6 border border-gray-200 shadow-sm">
               <div className="flex flex-col md:flex-row items-center md:items-start justify-between gap-4">
                 <div className="flex items-center gap-4">
                   <div className="relative">
-                    <div className={`absolute inset-0 rounded-full ${currentUser.status === 'free' ? 'bg-green-400' : 'bg-red-400'} blur-xl opacity-50`}></div>
+                    <div className={`absolute inset-0 rounded-full ${
+                      currentUser.status === 'free' ? 'bg-[#166534]' : 
+                      currentUser.status === 'important' ? 'bg-[#f97316]' : 
+                      'bg-[#991b1b]'
+                    } blur-xl opacity-50`}></div>
                     <img 
                       src={currentUser.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.full_name)}`}
                       alt={currentUser.full_name}
                       className="relative w-24 h-24 rounded-full border-4 border-white shadow-2xl"
                     />
-                    <div className={`absolute bottom-0 right-0 w-6 h-6 rounded-full border-4 border-white ${currentUser.status === 'free' ? 'bg-green-400' : 'bg-red-400'}`}>
-                      {currentUser.status === 'free' && <div className="w-full h-full rounded-full bg-green-400 animate-ping opacity-75"></div>}
+                    <div className={`absolute bottom-0 right-0 w-6 h-6 rounded-full border-4 border-white ${
+                      currentUser.status === 'free' ? 'bg-[#166534]' : 
+                      currentUser.status === 'important' ? 'bg-[#f97316]' : 
+                      'bg-[#991b1b]'
+                    }`}>
+                      {currentUser.status === 'free' && <div className="w-full h-full rounded-full bg-[#166534] animate-ping opacity-75"></div>}
+                      {currentUser.status === 'important' && <div className="w-full h-full rounded-full bg-[#f97316] animate-pulse opacity-75"></div>}
                     </div>
                   </div>
                   <div>
-                    <h2 className="text-3xl font-bold text-white mb-1">{currentUser.full_name}</h2>
+                    <h2 className="text-3xl font-bold text-[#212121] mb-1">{currentUser.full_name}</h2>
                     <div className="flex items-center gap-2">
-                      <div className={`px-3 py-1 rounded-full text-sm font-bold ${currentUser.status === 'free' ? 'bg-green-500/30 text-green-200 border border-green-400' : 'bg-red-500/30 text-red-200 border border-red-400'}`}>
-                        {currentUser.status === 'free' ? '✓ Available' : '✕ Busy'}
+                      <div className={`px-3 py-1 rounded-full text-sm font-bold text-white ${
+                        currentUser.status === 'free' ? 'bg-[#166534]' : 
+                        currentUser.status === 'important' ? 'bg-[#f97316]' : 
+                        'bg-[#991b1b]'
+                      }`}>
+                        {currentUser.status === 'free' ? '✓ Available' : 
+                         currentUser.status === 'important' ? '⚠ Important' : 
+                         '✕ Busy'}
                       </div>
                       {currentUser.role === 'admin' && (
-                        <div className="px-3 py-1 rounded-full text-sm font-bold bg-purple-500/30 text-purple-200 border border-purple-400">
+                        <div className="px-3 py-1 rounded-full text-sm font-bold bg-[#212121] text-white border border-[#212121]">
                           Admin
                         </div>
                       )}
@@ -1360,7 +1530,7 @@ const App = () => {
                 </div>
                 <button
                   onClick={() => setShowProfileSettings(!showProfileSettings)}
-                  className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 flex items-center gap-2 shadow-lg transition-all"
+                  className="px-5 py-2.5 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 flex items-center gap-2 shadow-sm transition-all"
                 >
                   <Settings className="w-4 h-4" />
                   {showProfileSettings ? 'Hide Settings' : 'Edit Profile'}
@@ -1370,15 +1540,15 @@ const App = () => {
 
             {/* Profile Settings Section */}
             {showProfileSettings && (
-              <div className="mb-6 p-6 bg-white/5 backdrop-blur-sm rounded-2xl border border-white/10">
-                <h3 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+              <div className="mb-6 p-6 bg-white rounded-2xl border border-gray-200 shadow-sm">
+                <h3 className="text-2xl font-bold text-[#212121] mb-6 flex items-center gap-2">
                   <Settings className="w-6 h-6" />
                   Profile Settings
                 </h3>
                 
                 {/* Avatar Upload */}
                 <div className="mb-6">
-                  <label className="block text-sm font-medium text-indigo-200 mb-3">Profile Picture</label>
+                    <label className="block text-sm font-medium text-[#212121] mb-3">Profile Picture</label>
                   <div className="flex items-center gap-4">
                     <div className="relative">
                       <div className="absolute inset-0 bg-indigo-400 rounded-full blur-xl opacity-50"></div>
@@ -1389,12 +1559,12 @@ const App = () => {
                       />
                       {uploadingAvatar && (
                         <div className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center backdrop-blur-sm">
-                          <div className="text-white text-sm font-semibold">Uploading...</div>
+                          <div className="text-[#212121] text-sm font-semibold">Uploading...</div>
                         </div>
                       )}
                     </div>
                     <div>
-                      <label className="cursor-pointer inline-flex items-center px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 shadow-lg transition-all">
+                      <label className="cursor-pointer inline-flex items-center px-5 py-2.5 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-lg transition-all">
                         <Upload className="w-4 h-4 mr-2" />
                         {avatarFile ? 'Change Image' : 'Upload Image'}
                         <input
@@ -1410,24 +1580,24 @@ const App = () => {
                             setAvatarFile(null);
                             setAvatarPreview(null);
                           }}
-                          className="ml-2 px-3 py-1.5 text-sm bg-red-500/20 text-red-300 hover:bg-red-500/30 rounded-lg border border-red-400/30 transition-all"
+                          className="ml-2 px-3 py-1.5 text-sm bg-[#991b1b] text-white hover:bg-[#991b1b]/90 rounded-lg border border-[#991b1b] transition-all"
                         >
                           <X className="w-4 h-4 inline mr-1" /> Cancel
                         </button>
                       )}
-                      <p className="text-xs text-indigo-300 mt-2">Max 5MB, JPG/PNG</p>
+                      <p className="text-xs text-[#212121]/60 mt-2">Max 5MB, JPG/PNG</p>
                     </div>
                   </div>
                 </div>
 
                 {/* Name Edit */}
                 <div className="mb-6">
-                  <label className="block text-sm font-medium text-indigo-200 mb-2">Full Name</label>
+                  <label className="block text-sm font-medium text-[#212121] mb-2">Full Name</label>
                   <input
                     type="text"
                     value={editingName}
                     onChange={(e) => setEditingName(e.target.value)}
-                    className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-indigo-300 focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 transition-all"
+                    className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
                     placeholder="Enter your full name"
                   />
                 </div>
@@ -1437,7 +1607,7 @@ const App = () => {
                   <button
                     onClick={updateProfile}
                     disabled={savingProfile || uploadingAvatar}
-                    className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-green-500 text-white rounded-xl hover:from-emerald-600 hover:to-green-600 flex items-center gap-2 shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105"
+                    className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 flex items-center gap-2 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Save className="w-5 h-5" />
                     {savingProfile ? 'Saving...' : 'Save Profile Changes'}
@@ -1445,42 +1615,42 @@ const App = () => {
                 </div>
 
                 {/* Password Change Section */}
-                <div className="border-t border-white/20 pt-6">
-                  <h4 className="text-xl font-bold text-white mb-4">Change Password</h4>
+                <div className="border-t border-gray-200 pt-6">
+                  <h4 className="text-xl font-bold text-[#212121] mb-4">Change Password</h4>
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-sm font-medium text-indigo-200 mb-2">Current Password</label>
+                      <label className="block text-sm font-medium text-[#212121] mb-2">Current Password</label>
                       <input
                         type="password"
                         value={currentPassword}
                         onChange={(e) => setCurrentPassword(e.target.value)}
-                        className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-indigo-300 focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 transition-all"
+                        className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
                         placeholder="Enter current password"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-indigo-200 mb-2">New Password</label>
+                      <label className="block text-sm font-medium text-[#212121] mb-2">New Password</label>
                       <input
                         type="password"
                         value={newPassword}
                         onChange={(e) => setNewPassword(e.target.value)}
-                        className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-indigo-300 focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 transition-all"
+                        className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
                         placeholder="Enter new password (min 6 characters)"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-indigo-200 mb-2">Confirm New Password</label>
+                      <label className="block text-sm font-medium text-[#212121] mb-2">Confirm New Password</label>
                       <input
                         type="password"
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
-                        className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-indigo-300 focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 transition-all"
+                        className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
                         placeholder="Confirm new password"
                       />
                     </div>
                     <button
                       onClick={changePassword}
-                      className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl transition-all transform hover:scale-105"
+                      className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-sm transition-all"
                     >
                       Change Password
                     </button>
@@ -1490,14 +1660,13 @@ const App = () => {
             )}
 
             {/* Status Control Section */}
-            <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-6 border border-white/10">
-              <h3 className="text-xl font-bold text-white mb-4">Update Your Status</h3>
+            <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
+              <h3 className="text-xl font-bold text-[#212121] mb-4">Update Your Status</h3>
               <div className="space-y-4">
-                {/* Status Note - only show when user is busy or when they want to add a note for busy status */}
-                {/* When user is free, status note is cleared and hidden (user can add note when setting to busy) */}
-                {(currentUser?.status === 'busy' || statusNote) && (
+                {/* Status Note - show when user is busy, important, or when adding a note */}
+                {(currentUser?.status === 'busy' || currentUser?.status === 'important' || (currentUser?.status === 'free' && statusNote)) && (
                   <div>
-                    <label className="block text-sm font-medium text-indigo-200 mb-2">
+                    <label className="block text-sm font-medium text-[#212121] mb-2">
                       Status Note {currentUser?.status === 'free' && '(optional, for busy status)'}
                     </label>
                     <input
@@ -1505,15 +1674,15 @@ const App = () => {
                       value={statusNote}
                       onChange={(e) => setStatusNote(e.target.value)}
                       placeholder="e.g., In a meeting, Working on urgent task..."
-                      className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-indigo-300 focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 transition-all"
+                      className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
                     />
                   </div>
                 )}
 
-                {/* Busy Duration - only show when status note is set (required for busy status) */}
-                {statusNote && (
+                {/* Duration - only show when status note is set (for busy status only, not for important) */}
+                {statusNote && currentUser?.status === 'busy' && (
                   <div>
-                    <label className="block text-sm font-medium text-indigo-200 mb-2">Busy Duration</label>
+                    <label className="block text-sm font-medium text-[#212121] mb-2">Busy Duration</label>
                     <div className="space-y-3">
                       <div className="flex gap-2">
                         {[15, 30, 60, 120].map(duration => (
@@ -1523,15 +1692,15 @@ const App = () => {
                               setBusyDuration(duration);
                               setUseCustomDuration(false);
                               setCustomDuration('');
-                              // Auto-update if already busy
+                              // Auto-update if already busy (not for important)
                               if (currentUser?.status === 'busy') {
                                 updateStatus('busy', duration);
                               }
                             }}
-                            className={`flex-1 py-3 rounded-xl font-bold transition-all ${
+                              className={`flex-1 py-3 rounded-xl font-bold transition-all ${
                               !useCustomDuration && busyDuration === duration
-                                ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg scale-105'
-                                : 'bg-white/10 text-indigo-200 hover:bg-white/20 border border-white/20'
+                                ? 'bg-[#212121] text-white shadow-lg scale-105'
+                                : 'bg-white text-[#212121] hover:bg-gray-50 border border-gray-300'
                             }`}
                           >
                             {duration}m
@@ -1552,8 +1721,8 @@ const App = () => {
                           }}
                           className={`px-4 py-2 rounded-xl font-medium transition-all ${
                             useCustomDuration
-                              ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white'
-                              : 'bg-white/10 text-indigo-200 hover:bg-white/20 border border-white/20'
+                              ? 'bg-[#212121] text-white'
+                              : 'bg-white text-[#212121] hover:bg-gray-50 border border-gray-300'
                           }`}
                         >
                           Custom
@@ -1597,9 +1766,9 @@ const App = () => {
                                 }
                               }}
                               placeholder="Minutes"
-                              className="flex-1 px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-indigo-300 focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 transition-all"
+                              className="flex-1 px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
                             />
-                            <span className="text-indigo-200 text-sm">minutes</span>
+                            <span className="text-[#212121]/70 text-sm">minutes</span>
                           </div>
                         )}
                       </div>
@@ -1607,18 +1776,24 @@ const App = () => {
                   </div>
                 )}
 
-                <div className="flex gap-4 pt-4">
+                <div className="grid grid-cols-3 gap-3 pt-4">
                   <button
                     onClick={() => updateStatus('free')}
-                    className="flex-1 py-4 bg-gradient-to-r from-emerald-500 to-green-500 text-white rounded-xl hover:from-emerald-600 hover:to-green-600 font-bold text-lg shadow-lg hover:shadow-xl transition-all transform hover:scale-105"
+                    className="py-4 bg-[#166534] text-white rounded-xl hover:bg-[#166534]/90 font-bold text-lg shadow-sm transition-all"
                   >
-                    ✓ Set as Free
+                    ✓ Free
                   </button>
                   <button
                     onClick={() => updateStatus('busy')}
-                    className="flex-1 py-4 bg-gradient-to-r from-rose-500 to-red-500 text-white rounded-xl hover:from-rose-600 hover:to-red-600 font-bold text-lg shadow-lg hover:shadow-xl transition-all transform hover:scale-105"
+                    className="py-4 bg-[#991b1b] text-white rounded-xl hover:bg-[#991b1b]/90 font-bold text-lg shadow-lg hover:shadow-xl transition-all transform hover:scale-105"
                   >
-                    ✕ Set as Busy
+                    ✕ Busy
+                  </button>
+                  <button
+                    onClick={() => updateStatus('important')}
+                    className="py-4 bg-[#f97316] text-white rounded-xl hover:bg-[#f97316]/90 font-bold text-lg shadow-sm transition-all"
+                  >
+                    ⚠ Important
                   </button>
                 </div>
               </div>
@@ -1629,14 +1804,14 @@ const App = () => {
             {currentUser?.role === 'admin' && (
               <button
                 onClick={() => setView('admin')}
-                className="flex-1 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:from-purple-700 hover:to-indigo-700 shadow-lg transition-all"
+                className="flex-1 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-lg transition-all"
               >
                 Admin Panel
               </button>
             )}
             <button
               onClick={() => setView('public')}
-              className="flex-1 py-3 bg-white/10 backdrop-blur-sm border border-white/20 text-white rounded-xl hover:bg-white/20 transition-all"
+              className="flex-1 py-3 bg-white border border-gray-300 text-[#212121] rounded-xl hover:bg-gray-50 transition-all"
             >
               View Public Dashboard
             </button>
@@ -1649,7 +1824,7 @@ const App = () => {
   // Admin Panel - Enhanced Design
   if (view === 'admin' && currentUser?.role === 'admin') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4 md:p-8">
+      <div className="min-h-screen bg-gradient-image-static p-4 md:p-8">
         {/* Animated background */}
         <div className="fixed inset-0 overflow-hidden pointer-events-none">
           <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
@@ -1660,32 +1835,32 @@ const App = () => {
           {/* Header */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
             <div>
-              <h1 className="text-4xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-indigo-400 mb-2">
+              <h1 className="text-4xl md:text-5xl font-extrabold text-[#212121] mb-2">
                 Admin Panel
               </h1>
               {sessionTimeLeft && (
-                <p className="text-purple-300 text-sm flex items-center gap-2">
+                <p className="text-[#212121]/70 text-sm flex items-center gap-2">
                   <Clock className="w-4 h-4" />
-                  Session: <span className="font-bold text-white">{sessionTimeLeft}</span>
+                  Session: <span className="font-bold text-[#212121]">{sessionTimeLeft}</span>
                 </p>
               )}
             </div>
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setView('employee')}
-                className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl hover:from-blue-700 hover:to-cyan-700 shadow-lg transition-all"
+                className="px-5 py-2.5 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-sm transition-all"
               >
                 My Control Panel
               </button>
               <button
                 onClick={() => setView('public')}
-                className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 shadow-lg transition-all"
+                className="px-5 py-2.5 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-lg transition-all"
               >
                 View Dashboard
               </button>
               <button
                 onClick={handleLogout}
-                className="px-5 py-2.5 bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-xl hover:from-red-700 hover:to-rose-700 flex items-center gap-2 shadow-lg transition-all"
+                className="px-5 py-2.5 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 flex items-center gap-2 shadow-sm transition-all"
               >
                 <LogOut className="w-4 h-4" />
                 Logout
@@ -1694,14 +1869,14 @@ const App = () => {
           </div>
 
           {/* Main Content */}
-          <div className="bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/20 p-6 md:p-8">
+          <div className="bg-white rounded-3xl shadow-2xl border border-gray-200 p-6 md:p-8">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-              <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-purple-200">
+              <h2 className="text-3xl font-bold text-[#212121]">
                 Manage Employees
               </h2>
               <button
                 onClick={() => setShowAddModal(true)}
-                className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-green-500 text-white rounded-xl hover:from-emerald-600 hover:to-green-600 flex items-center gap-2 shadow-lg hover:shadow-xl transition-all transform hover:scale-105"
+                className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 flex items-center gap-2 shadow-sm transition-all"
               >
                 <Plus className="w-5 h-5" />
                 Add Employee
@@ -1710,14 +1885,14 @@ const App = () => {
 
             <div className="space-y-3">
               {employees.length === 0 ? (
-                <div className="text-center py-12 text-purple-300">
+                <div className="text-center py-12 text-[#212121]/70">
                   <User className="w-16 h-16 mx-auto mb-4 opacity-50" />
                   <p className="text-xl">No employees yet</p>
                   <p className="text-sm mt-2">Click "Add Employee" to get started</p>
                 </div>
               ) : (
                 employees.map(emp => (
-                  <div key={emp.id} className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-5 hover:bg-white/10 transition-all">
+                  <div key={emp.id} className="bg-white border border-gray-200 rounded-2xl p-5 hover:bg-gray-50 transition-all shadow-sm">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-4">
                         <div className="relative">
@@ -1726,24 +1901,32 @@ const App = () => {
                             alt={emp.full_name}
                             className="w-16 h-16 rounded-full border-2 border-white/30 shadow-lg"
                           />
-                          <div className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border-2 border-white ${emp.status === 'free' ? 'bg-green-400' : 'bg-red-400'}`}></div>
+                          <div className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border-2 border-white ${
+                            emp.status === 'free' ? 'bg-[#166534]' : 
+                            emp.status === 'important' ? 'bg-[#f97316]' : 
+                            'bg-[#991b1b]'
+                          }`}></div>
                         </div>
                         <div>
-                          <h3 className="font-bold text-white text-lg">{emp.full_name}</h3>
+                          <h3 className="font-bold text-[#212121] text-lg">{emp.full_name}</h3>
                           <div className="flex items-center gap-2 mt-1">
                             <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
                               emp.role === 'admin' 
-                                ? 'bg-purple-500/30 text-purple-200 border border-purple-400' 
-                                : 'bg-blue-500/30 text-blue-200 border border-blue-400'
+                                ? 'bg-[#212121] text-white border border-[#212121]' 
+                                : 'bg-gray-200 text-[#212121] border border-gray-300'
                             }`}>
                               {emp.role}
                             </span>
-                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold text-white ${
                               emp.status === 'free' 
-                                ? 'bg-green-500/30 text-green-200 border border-green-400' 
-                                : 'bg-red-500/30 text-red-200 border border-red-400'
+                                ? 'bg-[#166534] border border-[#166534]' 
+                                : emp.status === 'important'
+                                ? 'bg-[#f97316] border border-[#f97316]'
+                                : 'bg-[#991b1b] border border-[#991b1b]'
                             }`}>
-                              {emp.status}
+                              {emp.status === 'free' ? 'Free' : 
+                               emp.status === 'important' ? 'Important' : 
+                               'Busy'}
                             </span>
                           </div>
                         </div>
@@ -1775,71 +1958,71 @@ const App = () => {
         {/* Add Employee Modal - Enhanced */}
         {showAddModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={(e) => e.target === e.currentTarget && setShowAddModal(false)}>
-            <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-3xl shadow-2xl border border-white/20 p-8 max-w-md w-full relative overflow-hidden">
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8 max-w-md w-full relative overflow-hidden">
               {/* Decorative gradient */}
               <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/20 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
               
               <div className="relative z-10">
                 <div className="flex items-center gap-3 mb-6">
-                  <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-green-500 rounded-xl flex items-center justify-center shadow-lg">
+                  <div className="w-12 h-12 bg-[#166534] rounded-xl flex items-center justify-center shadow-lg">
                     <Plus className="w-6 h-6 text-white" />
                   </div>
-                  <h3 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-green-400">Add New Employee</h3>
+                  <h3 className="text-3xl font-bold text-[#212121]">Add New Employee</h3>
                 </div>
                 
                 <div className="space-y-5">
-                  <div>
-                    <label className="block text-sm font-medium text-purple-200 mb-2">Username</label>
-                    <input
-                      type="text"
-                      value={newEmployee.username}
-                      onChange={(e) => setNewEmployee({...newEmployee, username: e.target.value})}
-                      className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-purple-300 focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition-all"
-                      placeholder="Unique username for login"
-                    />
-                    <p className="text-xs text-purple-300 mt-1">Username must be unique</p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-purple-200 mb-2">Full Name</label>
+                    <div>
+                      <label className="block text-sm font-medium text-[#212121] mb-2">Username</label>
+                      <input
+                        type="text"
+                        value={newEmployee.username}
+                        onChange={(e) => setNewEmployee({...newEmployee, username: e.target.value})}
+                        className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
+                        placeholder="Unique username for login"
+                      />
+                      <p className="text-xs text-[#212121]/60 mt-1">Username must be unique</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-[#212121] mb-2">Full Name</label>
                     <input
                       type="text"
                       value={newEmployee.full_name}
                       onChange={(e) => setNewEmployee({...newEmployee, full_name: e.target.value})}
-                      className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-purple-300 focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition-all"
+                      className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
                       placeholder="Employee's full name"
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-purple-200 mb-2">Password</label>
+                    <div>
+                      <label className="block text-sm font-medium text-[#212121] mb-2">Password</label>
                     <input
                       type="password"
                       value={newEmployee.password}
                       onChange={(e) => setNewEmployee({...newEmployee, password: e.target.value})}
-                      className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-purple-300 focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition-all"
+                      className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
                       placeholder="Min 6 characters"
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-purple-200 mb-2">Role</label>
-                    <select
-                      value={newEmployee.role}
-                      onChange={(e) => setNewEmployee({...newEmployee, role: e.target.value})}
-                      className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition-all"
-                    >
-                      <option value="employee" className="bg-slate-800">Employee</option>
-                      <option value="admin" className="bg-slate-800">Admin</option>
-                    </select>
-                  </div>
-                  <div className="flex gap-3 pt-4">
-                    <button
-                      onClick={addEmployee}
-                      className="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-green-500 text-white rounded-xl hover:from-emerald-600 hover:to-green-600 shadow-lg hover:shadow-xl transition-all transform hover:scale-105 font-semibold"
-                    >
-                      Add Employee
-                    </button>
+                    <div>
+                      <label className="block text-sm font-medium text-[#212121] mb-2">Role</label>
+                      <select
+                        value={newEmployee.role}
+                        onChange={(e) => setNewEmployee({...newEmployee, role: e.target.value})}
+                        className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
+                      >
+                        <option value="employee">Employee</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </div>
+                    <div className="flex gap-3 pt-4">
+                      <button
+                        onClick={addEmployee}
+                        className="flex-1 py-3 bg-[#166534] text-white rounded-xl hover:bg-[#166534]/90 shadow-lg hover:shadow-xl transition-all transform hover:scale-105 font-semibold"
+                      >
+                        Add Employee
+                      </button>
                     <button
                       onClick={() => setShowAddModal(false)}
-                      className="flex-1 py-3 bg-white/10 backdrop-blur-sm border border-white/20 text-white rounded-xl hover:bg-white/20 transition-all"
+                      className="flex-1 py-3 bg-white border border-gray-300 text-[#212121] rounded-xl hover:bg-gray-50 transition-all"
                     >
                       Cancel
                     </button>
@@ -1853,52 +2036,49 @@ const App = () => {
         {/* Edit Employee Modal - Enhanced */}
         {editingEmployee && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={(e) => e.target === e.currentTarget && setEditingEmployee(null)}>
-            <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-3xl shadow-2xl border border-white/20 p-8 max-w-md w-full max-h-[90vh] overflow-y-auto relative overflow-hidden">
-              {/* Decorative gradient */}
-              <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/20 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
-              
+            <div className="bg-white rounded-3xl shadow-2xl border border-gray-200 p-8 max-w-md w-full max-h-[90vh] overflow-y-auto relative overflow-hidden">
               <div className="relative z-10">
                 <div className="flex items-center gap-3 mb-6">
-                  <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-xl flex items-center justify-center shadow-lg">
+                  <div className="w-12 h-12 bg-[#212121] rounded-xl flex items-center justify-center shadow-lg">
                     <Edit2 className="w-6 h-6 text-white" />
                   </div>
-                  <h3 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-400">Edit Employee</h3>
+                  <h3 className="text-3xl font-bold text-[#212121]">Edit Employee</h3>
                 </div>
                 
                 <div className="space-y-5">
                   <div>
-                    <label className="block text-sm font-medium text-purple-200 mb-2">Username</label>
+                    <label className="block text-sm font-medium text-[#212121] mb-2">Username</label>
                     <input
                       type="text"
                       value={editingEmployee.username || ''}
                       onChange={(e) => setEditingEmployee({...editingEmployee, username: e.target.value})}
-                      className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-purple-300 focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-all"
+                      className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
                       placeholder="Username"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-purple-200 mb-2">Full Name</label>
+                    <label className="block text-sm font-medium text-[#212121] mb-2">Full Name</label>
                     <input
                       type="text"
                       value={editingEmployee.full_name}
                       onChange={(e) => setEditingEmployee({...editingEmployee, full_name: e.target.value})}
-                      className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-purple-300 focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-all"
+                      className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
                       placeholder="Employee's full name"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-purple-200 mb-2">Role</label>
+                    <label className="block text-sm font-medium text-[#212121] mb-2">Role</label>
                     <select
                       value={editingEmployee.role}
                       onChange={(e) => setEditingEmployee({...editingEmployee, role: e.target.value})}
-                      className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-all"
+                      className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
                     >
-                      <option value="employee" className="bg-slate-800">Employee</option>
-                      <option value="admin" className="bg-slate-800">Admin</option>
+                      <option value="employee">Employee</option>
+                      <option value="admin">Admin</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-purple-200 mb-3">Avatar</label>
+                    <label className="block text-sm font-medium text-[#212121] mb-3">Avatar</label>
                     <div className="flex items-center gap-4">
                       <div className="relative">
                         <div className="absolute inset-0 bg-blue-400 rounded-full blur-xl opacity-50"></div>
@@ -1908,7 +2088,7 @@ const App = () => {
                           className="relative w-20 h-20 rounded-full border-4 border-white shadow-xl"
                         />
                       </div>
-                      <label className="cursor-pointer inline-flex items-center px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 shadow-lg transition-all">
+                      <label className="cursor-pointer inline-flex items-center px-5 py-2.5 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-lg transition-all">
                         <Upload className="w-4 h-4 mr-2" />
                         Change Avatar
                         <input
@@ -1949,13 +2129,13 @@ const App = () => {
                         }
                         await updateEmployee(editingEmployee.id, updates);
                       }}
-                      className="flex-1 py-3 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-xl hover:from-blue-600 hover:to-indigo-600 shadow-lg hover:shadow-xl transition-all transform hover:scale-105 font-semibold"
+                      className="flex-1 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-lg hover:shadow-xl transition-all transform hover:scale-105 font-semibold"
                     >
                       Save Changes
                     </button>
                     <button
                       onClick={() => setEditingEmployee(null)}
-                      className="flex-1 py-3 bg-white/10 backdrop-blur-sm border border-white/20 text-white rounded-xl hover:bg-white/20 transition-all"
+                      className="flex-1 py-3 bg-white border border-gray-300 text-[#212121] rounded-xl hover:bg-gray-50 transition-all"
                     >
                       Cancel
                     </button>

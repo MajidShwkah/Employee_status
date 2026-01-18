@@ -29,7 +29,7 @@ Employees can now edit their profile, including avatar, name, and password!
 
 1. **Login to Employee Control Panel**
    - Go to http://localhost:5173/
-   - Click "Staff Login"
+   - Click "Settings"
    - Login with your credentials
 
 2. **Click "Edit Profile" Button**
