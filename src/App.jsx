@@ -207,13 +207,24 @@ const App = () => {
     }
     
     if (savedUserId) {
-      const { data: profile } = await supabase
+      const { data: profile, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', savedUserId)
         .single();
       
-      if (profile) {
+      // SECURITY: Verify we got the correct profile
+      if (error) {
+        console.error('Error loading profile:', error);
+        localStorage.removeItem('currentUserId');
+        localStorage.removeItem('sessionExpiry');
+        setCurrentUser(null);
+        setView('public');
+        setLoading(false);
+        return;
+      }
+      
+      if (profile && profile.id === savedUserId) {
         // CRITICAL: Always preserve avatar_url when setting currentUser
         // If profile has avatar_url, use it; otherwise keep existing if available
         const preservedAvatar = (profile.avatar_url && profile.avatar_url.trim() !== '') 
@@ -442,7 +453,19 @@ const App = () => {
   };
 
   const updateStatus = async (status, durationOverride = null) => {
-    if (!currentUser) return;
+    // SECURITY: Verify user is logged in
+    if (!currentUser) {
+      alert('You must be logged in to update status');
+      return;
+    }
+    
+    // SECURITY: Double-check currentUser is valid
+    const savedUserId = localStorage.getItem('currentUserId');
+    if (!savedUserId || savedUserId !== currentUser.id) {
+      alert('Session expired. Please login again.');
+      handleLogout();
+      return;
+    }
 
     // Calculate duration - use override if provided, otherwise use custom or preset
     let durationMinutes = durationOverride;
@@ -465,11 +488,20 @@ const App = () => {
       updated_at: new Date().toISOString()
     };
 
+    // SECURITY: Always verify we're updating our own profile
+    // This is critical - never allow updating other users' profiles
     const { error, data } = await supabase
       .from('profiles')
       .update(updates)
-      .eq('id', currentUser.id)
+      .eq('id', currentUser.id)  // CRITICAL: Only update current user's profile
       .select(); // Select to ensure realtime triggers
+    
+    // SECURITY: Verify the update was for the correct user
+    if (data && data.length > 0 && data[0].id !== currentUser.id) {
+      console.error('SECURITY ERROR: Attempted to update wrong profile!');
+      alert('Security error: Cannot update this profile');
+      return;
+    }
 
     if (!error) {
       console.log('✅ Status updated in database:', updates);
@@ -601,7 +633,19 @@ const App = () => {
 
   // Update profile (name and avatar)
   const updateProfile = async () => {
-    if (!currentUser) return;
+    // SECURITY: Verify user is logged in
+    if (!currentUser) {
+      alert('You must be logged in to update profile');
+      return;
+    }
+    
+    // SECURITY: Double-check currentUser is valid
+    const savedUserId = localStorage.getItem('currentUserId');
+    if (!savedUserId || savedUserId !== currentUser.id) {
+      alert('Session expired. Please login again.');
+      handleLogout();
+      return;
+    }
 
     setSavingProfile(true);
     try {
@@ -622,10 +666,19 @@ const App = () => {
 
       // Update profile if there are changes
       if (Object.keys(updates).length > 0) {
-        const { error } = await supabase
+        // SECURITY: Always verify we're updating our own profile
+        const { error, data } = await supabase
           .from('profiles')
           .update(updates)
-          .eq('id', currentUser.id);
+          .eq('id', currentUser.id)  // CRITICAL: Only update current user's profile
+          .select();
+        
+        // SECURITY: Verify the update was for the correct user
+        if (data && data.length > 0 && data[0].id !== currentUser.id) {
+          console.error('SECURITY ERROR: Attempted to update wrong profile!');
+          alert('Security error: Cannot update this profile');
+          return;
+        }
 
         if (error) throw error;
 
@@ -646,6 +699,20 @@ const App = () => {
 
   // Change password
   const changePassword = async () => {
+    // SECURITY: Verify user is logged in
+    if (!currentUser) {
+      alert('You must be logged in to change password');
+      return;
+    }
+    
+    // SECURITY: Double-check currentUser is valid
+    const savedUserId = localStorage.getItem('currentUserId');
+    if (!savedUserId || savedUserId !== currentUser.id) {
+      alert('Session expired. Please login again.');
+      handleLogout();
+      return;
+    }
+    
     if (!currentPassword || !newPassword || !confirmPassword) {
       alert('Please fill in all password fields');
       return;
@@ -672,11 +739,19 @@ const App = () => {
       // Hash new password
       const hashedPassword = await hashPassword(newPassword);
 
-      // Update password in database
-      const { error } = await supabase
+      // SECURITY: Always verify we're updating our own profile
+      const { error, data } = await supabase
         .from('profiles')
         .update({ password_hash: hashedPassword })
-        .eq('id', currentUser.id);
+        .eq('id', currentUser.id)  // CRITICAL: Only update current user's password
+        .select();
+      
+      // SECURITY: Verify the update was for the correct user
+      if (data && data.length > 0 && data[0].id !== currentUser.id) {
+        console.error('SECURITY ERROR: Attempted to update wrong profile password!');
+        alert('Security error: Cannot update this profile');
+        return;
+      }
 
       if (error) throw error;
 
@@ -756,10 +831,33 @@ const App = () => {
   };
 
   const updateEmployee = async (id, updates) => {
-    const { error } = await supabase
+    // SECURITY: Only admins can update other employees
+    if (!currentUser || currentUser.role !== 'admin') {
+      alert('Only admins can update employee profiles');
+      return;
+    }
+    
+    // SECURITY: Verify admin is logged in
+    const savedUserId = localStorage.getItem('currentUserId');
+    if (!savedUserId || savedUserId !== currentUser.id) {
+      alert('Session expired. Please login again.');
+      handleLogout();
+      return;
+    }
+    
+    // SECURITY: Admins can update any employee, but verify the update succeeded
+    const { error, data } = await supabase
       .from('profiles')
       .update(updates)
-      .eq('id', id);
+      .eq('id', id)
+      .select();
+    
+    // SECURITY: Verify the update was for the intended employee
+    if (data && data.length > 0 && data[0].id !== id) {
+      console.error('SECURITY ERROR: Update returned wrong profile!');
+      alert('Security error: Update failed');
+      return;
+    }
     
     if (error) {
       alert('Error updating employee: ' + error.message);
