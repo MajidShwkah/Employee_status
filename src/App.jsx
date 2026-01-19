@@ -43,7 +43,7 @@ const App = () => {
   const [password, setPassword] = useState('');
 
   // Employee control state
-  const [statusNote, setStatusNote] = useState('');
+  const [noteText, setNoteText] = useState(''); // Separate note state (independent of status)
   const [busyDuration, setBusyDuration] = useState(30);
   const [customDuration, setCustomDuration] = useState('');
   const [useCustomDuration, setUseCustomDuration] = useState(false);
@@ -377,12 +377,13 @@ const App = () => {
     setLoading(false);
   };
 
-  // Sync status fields when currentUser changes
+  // Sync fields when currentUser changes
   useEffect(() => {
     if (currentUser) {
-      // Sync status note from current user
-      if (currentUser.status_note && currentUser.status_note !== statusNote) {
-        setStatusNote(currentUser.status_note);
+      // Sync note from current user (independent of status)
+      const currentNote = currentUser.status_note || '';
+      if (currentNote !== noteText) {
+        setNoteText(currentNote);
       }
       
       // Calculate and sync busy duration if user is busy (not for important)
@@ -601,7 +602,7 @@ const App = () => {
 
     const updates = {
       status,
-      status_note: status === 'free' ? null : statusNote, // Clear status_note only when setting to free
+      // Note is now independent - don't clear it when changing status
       busy_until: status === 'busy' ? new Date(Date.now() + durationMinutes * 60000).toISOString() : null, // Only set timer for busy status
       updated_at: new Date().toISOString()
     };
@@ -652,12 +653,162 @@ const App = () => {
       }
       
       if (status === 'free') {
-        setStatusNote('');
         setCustomDuration('');
         setUseCustomDuration(false);
       }
     } else {
       alert('Error updating status: ' + error.message);
+    }
+  };
+
+  // Update note (independent of status)
+  const updateNote = async () => {
+    // SECURITY: Verify user is logged in
+    if (!currentUser) {
+      alert('You must be logged in to update note');
+      return;
+    }
+    
+    // SECURITY: Double-check currentUser is valid
+    const savedUserId = localStorage.getItem('currentUserId');
+    if (!savedUserId || savedUserId !== currentUser.id) {
+      alert('Session expired. Please login again.');
+      handleLogout();
+      return;
+    }
+
+    const noteValue = noteText.trim() || null; // Store null if empty, otherwise the trimmed note
+
+    const updates = {
+      status_note: noteValue,
+      updated_at: new Date().toISOString()
+    };
+
+    // SECURITY: Always verify we're updating our own profile
+    const { error, data } = await supabase
+      .from('profiles')
+      .update(updates)
+      .eq('id', currentUser.id)  // CRITICAL: Only update current user's profile
+      .select();
+    
+    // SECURITY: Verify the update was for the correct user
+    if (data && data.length > 0 && data[0].id !== currentUser.id) {
+      console.error('SECURITY ERROR: Attempted to update wrong profile!');
+      alert('Security error: Cannot update this profile');
+      return;
+    }
+
+    if (!error) {
+      console.log('✅ Note updated in database');
+      // IMMEDIATE UPDATE: Update local state immediately for instant UI feedback
+      const updatedUser = { ...currentUser, status_note: noteValue };
+      setCurrentUser(updatedUser);
+      
+      // IMMEDIATE UPDATE: Update employees list immediately
+      setEmployees(prev => 
+        prev.map(emp => emp.id === currentUser.id ? updatedUser : emp)
+      );
+      
+      // Show notification
+      setNotification({
+        type: 'note',
+        name: currentUser.full_name,
+        note: noteValue || '',
+        emoji: '💬'
+      });
+      
+      // Fetch complete updated profile to ensure all fields are correct
+      const { data: updatedProfile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', currentUser.id)
+        .single();
+      
+      if (updatedProfile) {
+        // Ensure avatar_url is preserved
+        const preservedAvatar = updatedProfile.avatar_url || currentUser.avatar_url;
+        const finalUser = { ...updatedProfile, avatar_url: preservedAvatar };
+        setCurrentUser(finalUser);
+        
+        // Update employees list with the complete profile
+        setEmployees(prev => 
+          prev.map(emp => emp.id === currentUser.id ? finalUser : emp)
+        );
+      }
+    } else {
+      alert('Error updating note: ' + error.message);
+    }
+  };
+
+  // Remove note
+  const removeNote = async () => {
+    // SECURITY: Verify user is logged in
+    if (!currentUser) {
+      alert('You must be logged in to remove note');
+      return;
+    }
+    
+    // SECURITY: Double-check currentUser is valid
+    const savedUserId = localStorage.getItem('currentUserId');
+    if (!savedUserId || savedUserId !== currentUser.id) {
+      alert('Session expired. Please login again.');
+      handleLogout();
+      return;
+    }
+
+    const updates = {
+      status_note: null,
+      updated_at: new Date().toISOString()
+    };
+
+    // SECURITY: Always verify we're updating our own profile
+    const { error, data } = await supabase
+      .from('profiles')
+      .update(updates)
+      .eq('id', currentUser.id)  // CRITICAL: Only update current user's profile
+      .select();
+    
+    // SECURITY: Verify the update was for the correct user
+    if (data && data.length > 0 && data[0].id !== currentUser.id) {
+      console.error('SECURITY ERROR: Attempted to update wrong profile!');
+      alert('Security error: Cannot update this profile');
+      return;
+    }
+
+    if (!error) {
+      console.log('✅ Note removed from database');
+      // Clear the note input
+      setNoteText('');
+      
+      // IMMEDIATE UPDATE: Update local state immediately for instant UI feedback
+      const updatedUser = { ...currentUser, status_note: null };
+      setCurrentUser(updatedUser);
+      
+      // IMMEDIATE UPDATE: Update employees list immediately
+      setEmployees(prev => 
+        prev.map(emp => emp.id === currentUser.id ? updatedUser : emp)
+      );
+      
+      // Fetch complete updated profile to ensure all fields are correct
+      const { data: updatedProfile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', currentUser.id)
+        .single();
+      
+      if (updatedProfile) {
+        // Ensure avatar_url is preserved
+        const preservedAvatar = updatedProfile.avatar_url || currentUser.avatar_url;
+        const finalUser = { ...updatedProfile, avatar_url: preservedAvatar };
+        setCurrentUser(finalUser);
+        
+        // Update employees list with the complete profile
+        setEmployees(prev => 
+          prev.map(emp => emp.id === currentUser.id ? finalUser : emp)
+        );
+      }
+    } else {
+      alert('Error removing note: ' + error.message);
     }
   };
 
@@ -891,6 +1042,18 @@ const App = () => {
       setEditingName(currentUser.full_name);
     }
   }, [showProfileSettings, currentUser]);
+
+  // Auto-redirect if logged in user tries to access login page
+  useEffect(() => {
+    if (view === 'login' && currentUser && !loading) {
+      // User is logged in but on login page - redirect to their control panel
+      if (currentUser.role === 'admin') {
+        setView('admin');
+      } else {
+        setView('employee');
+      }
+    }
+  }, [view, currentUser, loading]);
 
   const addEmployee = async () => {
     if (!newEmployee.username || !newEmployee.full_name || !newEmployee.password) {
@@ -1320,7 +1483,18 @@ const App = () => {
               
               {/* Settings - Right */}
               <button
-                onClick={() => setView('login')}
+                onClick={() => {
+                  // If user is logged in, go to their control panel, otherwise go to login
+                  if (currentUser) {
+                    if (currentUser.role === 'admin') {
+                      setView('admin');
+                    } else {
+                      setView('employee');
+                    }
+                  } else {
+                    setView('login');
+                  }
+                }}
                 className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 flex items-center gap-2 shadow-sm transition-all duration-300 order-3"
               >
                 <User className="w-5 h-5" />
@@ -1407,6 +1581,18 @@ const App = () => {
 
   // Login View - Enhanced Design
   if (view === 'login') {
+    // If user is already logged in, show redirecting message (useEffect will handle redirect)
+    if (currentUser && !loading) {
+      return (
+        <div className="min-h-screen bg-gradient-image-static flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <div className="text-[#212121] text-xl font-semibold">Redirecting to your control panel...</div>
+          </div>
+        </div>
+      );
+    }
+    
     return (
       <div className="min-h-screen bg-gradient-image-static flex items-center justify-center p-4 relative overflow-hidden">
         {/* Animated background */}
@@ -1474,7 +1660,41 @@ const App = () => {
   }
 
   // Employee Control Panel - Enhanced Design
-  if (view === 'employee' && currentUser) {
+  if (view === 'employee') {
+    // Debug: Log current state
+    console.log('🔍 Employee view triggered - currentUser:', currentUser ? currentUser.full_name : 'null', 'view:', view, 'loading:', loading);
+    
+    // If still loading, show loading state
+    if (loading) {
+      return (
+        <div className="min-h-screen bg-gradient-image-static flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <div className="text-[#212121] text-xl font-semibold">Loading Control Panel...</div>
+          </div>
+        </div>
+      );
+    }
+    
+    // If no current user, redirect to login
+    if (!currentUser) {
+      return (
+        <div className="min-h-screen bg-gradient-image-static flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8 max-w-md w-full text-center">
+            <h2 className="text-2xl font-bold text-[#212121] mb-4">Please Login</h2>
+            <p className="text-[#212121]/70 mb-6">You need to be logged in to access the control panel.</p>
+            <button
+              onClick={() => setView('login')}
+              className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 font-semibold transition-all"
+            >
+              Go to Login
+            </button>
+          </div>
+        </div>
+      );
+    }
+    
+    // Render the control panel
     return (
       <div className="min-h-screen bg-gradient-image-static p-4 md:p-8">
         {/* Animated background */}
@@ -1692,27 +1912,48 @@ const App = () => {
               </div>
             )}
 
+            {/* Note Management Section - Independent of Status */}
+            <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm mb-6">
+              <h3 className="text-xl font-bold text-[#212121] mb-4">Your Status Note</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-[#212121] mb-2">
+                    Note (optional - visible to everyone)
+                  </label>
+                  <input
+                    type="text"
+                    value={noteText}
+                    onChange={(e) => setNoteText(e.target.value)}
+                    placeholder="e.g., Working on project, Available for urgent matters..."
+                    className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={updateNote}
+                    className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-sm transition-all flex items-center gap-2"
+                  >
+                    <Save className="w-4 h-4" />
+                    Update Note
+                  </button>
+                  {(currentUser?.status_note || noteText.trim()) && (
+                    <button
+                      onClick={removeNote}
+                      className="px-6 py-3 bg-[#991b1b] text-white rounded-xl hover:bg-[#991b1b]/90 shadow-sm transition-all flex items-center gap-2"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Remove Note
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
             {/* Status Control Section */}
             <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
               <h3 className="text-xl font-bold text-[#212121] mb-4">Update Your Status</h3>
               <div className="space-y-4">
-                {/* Status Note - show when user is busy, important, or when adding a note */}
-                {(currentUser?.status === 'busy' || currentUser?.status === 'important' || (currentUser?.status === 'free' && statusNote)) && (
-                  <div>
-                    <label className="block text-sm font-medium text-[#212121] mb-2">
-                      Status Note {currentUser?.status === 'free' && '(optional)'}
-                    </label>
-                    <input
-                      type="text"
-                      value={statusNote}
-                      onChange={(e) => setStatusNote(e.target.value)}
-                      placeholder="e.g., In a meeting, Working on urgent task... (optional)"
-                      className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                    />
-                  </div>
-                )}
-
-                {/* Duration - show when user is busy (note is optional) */}
+                {/* Duration - show when user is busy (timer only for busy status) */}
                 {currentUser?.status === 'busy' && (
                   <div>
                     <label className="block text-sm font-medium text-[#212121] mb-2">Busy Duration</label>
@@ -1949,7 +2190,7 @@ const App = () => {
               </button>
               <button
                 onClick={handleLogout}
-                className="px-5 py-2.5 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 flex items-center gap-2 shadow-sm transition-all"
+                className="px-5 py-2.5 bg-[#991b1b] text-white rounded-xl hover:bg-[#991b1b]/90 flex items-center gap-2 shadow-lg transition-all"
               >
                 <LogOut className="w-4 h-4" />
                 Logout
