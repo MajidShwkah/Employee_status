@@ -1220,28 +1220,28 @@ const App = () => {
               : 'bg-[#991b1b] border-[#991b1b] shadow-[#991b1b]/50'
             : 'bg-white border border-gray-200'
           }
-          text-white max-w-3xl w-full mx-4
+          ${notification.type === 'note' ? 'text-[#212121]' : 'text-white'} max-w-3xl w-full mx-4
         `}>
           <div className="flex items-start justify-between gap-6">
             <div className="flex-1">
               <div className="flex items-center gap-4 mb-3">
                 <span className="text-5xl">{notification.emoji}</span>
-                <h3 className="text-3xl font-extrabold">{notification.name}</h3>
+                <h3 className={`text-3xl font-extrabold ${notification.type === 'note' ? 'text-[#212121]' : 'text-white'}`}>{notification.name}</h3>
               </div>
               {notification.type === 'note' ? (
                 <div className="mt-4">
-                  <p className="text-2xl font-bold mb-3">says:</p>
-                  <div className="p-4 bg-white/25 rounded-xl border-2 border-white/40 backdrop-blur-sm">
-                    <p className="text-2xl font-semibold italic leading-relaxed">"{notification.note}"</p>
+                  <p className="text-2xl font-bold mb-3 text-[#212121]">says:</p>
+                  <div className="p-4 bg-gray-100 rounded-xl border-2 border-gray-300">
+                    <p className="text-2xl font-semibold italic leading-relaxed text-[#212121]">"{notification.note}"</p>
                   </div>
                 </div>
               ) : (
-                <p className="text-2xl font-bold">{notification.message}</p>
+                <p className="text-2xl font-bold text-white">{notification.message}</p>
               )}
             </div>
             <button
               onClick={onClose}
-              className="text-white/90 hover:text-white transition-colors flex-shrink-0"
+              className={`${notification.type === 'note' ? 'text-[#212121]/70 hover:text-[#212121]' : 'text-white/90 hover:text-white'} transition-colors flex-shrink-0`}
             >
               <X className="w-7 h-7" />
             </button>
