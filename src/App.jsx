@@ -1667,20 +1667,20 @@ const App = () => {
                 {(currentUser?.status === 'busy' || currentUser?.status === 'important' || (currentUser?.status === 'free' && statusNote)) && (
                   <div>
                     <label className="block text-sm font-medium text-[#212121] mb-2">
-                      Status Note {currentUser?.status === 'free' && '(optional, for busy status)'}
+                      Status Note {currentUser?.status === 'free' && '(optional)'}
                     </label>
                     <input
                       type="text"
                       value={statusNote}
                       onChange={(e) => setStatusNote(e.target.value)}
-                      placeholder="e.g., In a meeting, Working on urgent task..."
+                      placeholder="e.g., In a meeting, Working on urgent task... (optional)"
                       className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
                     />
                   </div>
                 )}
 
-                {/* Duration - only show when status note is set (for busy status only, not for important) */}
-                {statusNote && currentUser?.status === 'busy' && (
+                {/* Duration - show when user is busy (note is optional) */}
+                {currentUser?.status === 'busy' && (
                   <div>
                     <label className="block text-sm font-medium text-[#212121] mb-2">Busy Duration</label>
                     <div className="space-y-3">
