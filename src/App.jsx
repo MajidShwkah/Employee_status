@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { Clock, User, Plus, Trash2, Edit2, LogOut, Eye, EyeOff, Settings, Upload, Save, X, MessageSquare } from 'lucide-react';
+import { Clock, User, Plus, Trash2, Edit2, LogOut, Eye, EyeOff, Settings, Upload, Save, X, MessageSquare, Moon, Sun } from 'lucide-react';
+import adhanAudio from './Adan.mp3';
 
 // Simple password hashing using Web Crypto API
 const hashPassword = async (password) => {
@@ -77,15 +78,42 @@ const App = () => {
   // Notes gallery state
   const [currentNoteIndex, setCurrentNoteIndex] = useState(0);
 
+  // Prayer times state
+  const [prayerTimes, setPrayerTimes] = useState(null);
+  const [nextPrayer, setNextPrayer] = useState(null);
+  const [countdown, setCountdown] = useState('');
+  const [lastPlayedPrayer, setLastPlayedPrayer] = useState(null);
+  const [prayerDateInfo, setPrayerDateInfo] = useState(null);
+  const [currentTime, setCurrentTime] = useState('');
+  const adhanAudioRef = useRef(null);
+
   // Initialize and setup realtime subscription
   useEffect(() => {
     // Only check user on mount, not on every render
     const initApp = async () => {
       await checkUser();
       await fetchEmployees();
+      await fetchPrayerTimes();
       setIsInitialLoad(false);
     };
     initApp();
+    
+    // Refresh prayer times daily at midnight
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+    const msUntilMidnight = tomorrow.getTime() - now.getTime();
+    
+    const prayerTimesRefresh = setTimeout(() => {
+      fetchPrayerTimes();
+      // Then refresh every 24 hours
+      setInterval(fetchPrayerTimes, 24 * 60 * 60 * 1000);
+    }, msUntilMidnight);
+    
+    return () => {
+      clearTimeout(prayerTimesRefresh);
+    };
     
     // Periodically refresh session to keep user logged in
     // This ensures session persists across page navigations
@@ -495,6 +523,168 @@ const App = () => {
       setEmployees(data);
     }
   };
+
+  // Fetch prayer times for Riyadh, KSA using Umm Al-Qura method (method 4)
+  const fetchPrayerTimes = async () => {
+    try {
+      const today = new Date();
+      const dateStr = `${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}`;
+      const response = await fetch(
+        `https://api.aladhan.com/v1/timingsByAddress/${dateStr}?address=Riyadh,Saudi Arabia&method=4`
+      );
+      const data = await response.json();
+      
+      if (data.status === 'OK' && data.data && data.data.timings) {
+        setPrayerTimes(data.data.timings);
+        calculateNextPrayer(data.data.timings);
+        // Store date information from API
+        if (data.data.date) {
+          setPrayerDateInfo(data.data.date);
+        }
+        // Reset last played prayer when fetching new prayer times (new day)
+        setLastPlayedPrayer(null);
+      }
+    } catch (error) {
+      console.error('Error fetching prayer times:', error);
+    }
+  };
+
+  // Calculate next prayer and countdown
+  const calculateNextPrayer = (timings) => {
+    const now = new Date();
+    const currentTime = now.getHours() * 60 + now.getMinutes(); // Current time in minutes
+    
+    const prayerNames = {
+      'Fajr': 'Fajr',
+      'Dhuhr': 'Dhuhr',
+      'Asr': 'Asr',
+      'Maghrib': 'Maghrib',
+      'Isha': 'Isha'
+    };
+    
+    const prayers = Object.keys(prayerNames).map(name => {
+      const timeStr = timings[name];
+      const [hours, minutes] = timeStr.split(':').map(Number);
+      const timeInMinutes = hours * 60 + minutes;
+      return {
+        name: prayerNames[name],
+        time: timeStr,
+        timeInMinutes: timeInMinutes
+      };
+    });
+    
+    // Find next prayer
+    let nextPrayerInfo = null;
+    for (const prayer of prayers) {
+      if (prayer.timeInMinutes > currentTime) {
+        nextPrayerInfo = prayer;
+        break;
+      }
+    }
+    
+    // If no prayer found for today, use tomorrow's Fajr
+    if (!nextPrayerInfo) {
+      nextPrayerInfo = {
+        name: 'Fajr',
+        time: timings.Fajr,
+        timeInMinutes: prayers[0].timeInMinutes + 24 * 60 // Add 24 hours
+      };
+    }
+    
+    setNextPrayer(nextPrayerInfo);
+  };
+
+  // Play Adhan audio and show notification
+  const playAdhan = (prayerName) => {
+    try {
+      // Play audio
+      if (adhanAudioRef.current) {
+        adhanAudioRef.current.currentTime = 0; // Reset to beginning
+        adhanAudioRef.current.play().catch(error => {
+          console.error('Error playing Adhan audio:', error);
+        });
+      }
+      
+      // Show notification
+      setNotification({
+        type: 'status',
+        status: 'important', // Use important status for special styling
+        name: 'Adan Time',
+        message: `حان وقت الصلاه - ${prayerName} - جزاكم الله خير`,
+        emoji: '🕌'
+      });
+    } catch (error) {
+      console.error('Error in playAdhan:', error);
+    }
+  };
+
+  // Update current time display (without seconds)
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      setCurrentTime(`${hours}:${minutes}`);
+    };
+    
+    updateTime();
+    const interval = setInterval(updateTime, 60000); // Update every minute since we don't show seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  // Update countdown timer
+  useEffect(() => {
+    if (!nextPrayer) return;
+    
+    const updateCountdown = () => {
+      const now = new Date();
+      const currentHours = now.getHours();
+      const currentMinutes = now.getMinutes();
+      const currentSeconds = now.getSeconds();
+      const currentTime = currentHours * 60 + currentMinutes; // Current time in minutes
+      
+      let timeUntilPrayer = nextPrayer.timeInMinutes - currentTime;
+      
+      // Handle case where next prayer is tomorrow
+      if (timeUntilPrayer < 0) {
+        timeUntilPrayer += 24 * 60;
+      }
+      
+      // Calculate total seconds remaining
+      const totalSeconds = timeUntilPrayer * 60 - currentSeconds;
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      
+      if (hours > 0) {
+        setCountdown(`${hours}h ${minutes}m ${seconds}s`);
+      } else if (minutes > 0) {
+        setCountdown(`${minutes}m ${seconds}s`);
+      } else {
+        setCountdown(`${seconds}s`);
+      }
+      
+      // Check if prayer time has arrived (within 1 second tolerance)
+      if (totalSeconds <= 1 && totalSeconds >= 0 && prayerTimes) {
+        const currentPrayerKey = `${nextPrayer.name}-${nextPrayer.time}`;
+        
+        // Only play Adhan if we haven't played it for this prayer yet
+        if (lastPlayedPrayer !== currentPrayerKey) {
+          playAdhan(nextPrayer.name);
+          setLastPlayedPrayer(currentPrayerKey);
+        }
+        
+        // Recalculate next prayer
+        calculateNextPrayer(prayerTimes);
+      }
+    };
+    
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000); // Update every second
+    
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextPrayer, prayerTimes]);
 
   const handleLogin = async () => {
     if (!username || !password) {
@@ -1419,6 +1609,13 @@ const App = () => {
   if (view === 'public') {
     return (
       <div className="min-h-screen bg-gradient-image-static p-4 md:p-8">
+        {/* Adhan Audio Element */}
+        <audio 
+          ref={adhanAudioRef} 
+          src={adhanAudio} 
+          preload="auto"
+        />
+        
         {/* Notification */}
         {notification && (
           <Notification 
@@ -1442,44 +1639,45 @@ const App = () => {
 
         <div className="max-w-7xl mx-auto relative z-10">
           {/* Header - Organized Layout */}
-          <div className="mb-8 space-y-4">
-            {/* Top Row: Status Guide | Logo | Settings */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-              {/* Status Guide - Left */}
-              <div className="bg-white rounded-xl p-3 md:p-4 border border-gray-200 shadow-sm order-2 sm:order-1">
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                  {/* Red - Busy */}
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 rounded-full bg-[#991b1b] border-2 border-white shadow-sm flex-shrink-0"></div>
-                    <div className="text-xs md:text-sm text-[#212121] font-medium whitespace-nowrap">
-                      <span className="font-bold">Busy</span> - <span className="text-[#212121]/70">مشغول</span>
-                    </div>
-                  </div>
-                  {/* Green - Available */}
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 rounded-full bg-[#166534] border-2 border-white shadow-sm flex-shrink-0"></div>
-                    <div className="text-xs md:text-sm text-[#212121] font-medium whitespace-nowrap">
-                      <span className="font-bold">Available</span> - <span className="text-[#212121]/70">متاح</span>
-                    </div>
-                  </div>
-                  {/* Orange - Important */}
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 rounded-full bg-[#f97316] border-2 border-white shadow-sm flex-shrink-0"></div>
-                    <div className="text-xs md:text-sm text-[#212121] font-medium whitespace-nowrap">
-                      <span className="font-bold">Important Only</span> - <span className="text-[#212121]/70">متاح عند الضرورة فقط</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Logo - Center */}
-              <div className="bg-white rounded-xl p-2 shadow-sm order-1 sm:order-2">
+          <div className="mb-12">
+            {/* Top Row: Logo | 4-Area Prayer/Date Widget | Settings */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+              {/* Logo - Left */}
+              <div className="bg-white rounded-xl p-2 shadow-sm h-20 flex items-center">
                 <img 
                   src="/Rime_logo.jpeg" 
                   alt="Rime Logo" 
-                  className="h-12 md:h-16 w-auto object-contain"
+                  className="h-10 w-auto object-contain"
                 />
               </div>
+              
+              {/* Prayer & Date/Time Widget - Center */}
+              {prayerDateInfo && prayerTimes && nextPrayer && (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm h-20 flex items-center gap-3 px-3 max-w-md">
+                  {/* Islamic Icon for Prayer */}
+                  <div className="flex-shrink-0">
+                    {nextPrayer.name === 'Fajr' ? (
+                      <Moon className="w-7 h-7 text-[#166534]" />
+                    ) : nextPrayer.name === 'Maghrib' || nextPrayer.name === 'Isha' ? (
+                      <Moon className="w-7 h-7 text-[#991b1b]" />
+                    ) : (
+                      <Sun className="w-7 h-7 text-[#f97316]" />
+                    )}
+                  </div>
+                  
+                  {/* Prayer Info */}
+                  <div className="flex-1 flex flex-col justify-center min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className="text-sm font-bold text-[#212121]">Next Prayer: {nextPrayer.name}</span>
+                      <span className="text-sm font-bold text-[#166534] font-mono">{nextPrayer.time}</span>
+                      <span className="text-xs font-bold text-[#166534] font-mono">({countdown || 'Loading...'})</span>
+                    </div>
+                    <div className="text-xs text-[#212121]/70">
+                      {prayerDateInfo.gregorian?.weekday?.en}, {prayerDateInfo.gregorian?.day} {prayerDateInfo.gregorian?.month?.en} {prayerDateInfo.gregorian?.year} - {currentTime}
+                    </div>
+                  </div>
+                </div>
+              )}
               
               {/* Settings - Right */}
               <button
@@ -1495,7 +1693,7 @@ const App = () => {
                     setView('login');
                   }
                 }}
-                className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 flex items-center gap-2 shadow-sm transition-all duration-300 order-3"
+                className="px-3 py-1.5 bg-[#212121] text-white rounded-lg hover:bg-[#212121]/90 flex items-center justify-center gap-1.5 shadow-sm transition-all duration-300 text-sm"
               >
                 <User className="w-5 h-5" />
                 <span className="hidden sm:inline">Settings</span>
@@ -1511,30 +1709,7 @@ const App = () => {
               const currentEmployee = employeesWithNotes[currentNoteIndex % employeesWithNotes.length];
               
               return (
-                <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-200 shadow-sm">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <MessageSquare className="w-5 h-5 md:w-6 md:h-6 text-[#212121]" />
-                      <span className="text-base md:text-lg font-bold text-[#212121]">Status Updates</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => setCurrentNoteIndex(prev => (prev - 1 + employeesWithNotes.length) % employeesWithNotes.length)}
-                        className="px-3 py-2 text-[#212121] hover:text-[#212121] hover:bg-gray-100 rounded-lg transition-all text-lg font-bold"
-                      >
-                        ←
-                      </button>
-                      <span className="text-xs md:text-sm text-[#212121]/70 font-semibold">
-                        {currentNoteIndex % employeesWithNotes.length + 1} / {employeesWithNotes.length}
-                      </span>
-                      <button
-                        onClick={() => setCurrentNoteIndex(prev => (prev + 1) % employeesWithNotes.length)}
-                        className="px-3 py-2 text-[#212121] hover:text-[#212121] hover:bg-gray-100 rounded-lg transition-all text-lg font-bold"
-                      >
-                        →
-                      </button>
-                    </div>
-                  </div>
+                <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-200 shadow-sm mt-8">
                   <div className="flex items-center gap-4">
                     <img 
                       src={currentEmployee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentEmployee.full_name)}&background=4F46E5&color=fff&size=128`}
@@ -1542,7 +1717,26 @@ const App = () => {
                       className="w-14 h-14 md:w-16 md:h-16 rounded-full border-2 border-white/40 shadow-lg flex-shrink-0"
                     />
                     <div className="flex-1 min-w-0">
-                      <p className="text-lg md:text-xl font-extrabold text-[#212121] mb-1.5 truncate">{currentEmployee.full_name}</p>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-lg md:text-xl font-extrabold text-[#212121] truncate">{currentEmployee.full_name}</p>
+                        <div className="flex items-center gap-2 ml-2 flex-shrink-0">
+                          <button
+                            onClick={() => setCurrentNoteIndex(prev => (prev - 1 + employeesWithNotes.length) % employeesWithNotes.length)}
+                            className="px-2 py-1 text-[#212121] hover:text-[#212121] hover:bg-gray-100 rounded transition-all text-lg font-bold"
+                          >
+                            ←
+                          </button>
+                          <span className="text-xs md:text-sm text-[#212121]/70 font-semibold">
+                            {currentNoteIndex % employeesWithNotes.length + 1} / {employeesWithNotes.length}
+                          </span>
+                          <button
+                            onClick={() => setCurrentNoteIndex(prev => (prev + 1) % employeesWithNotes.length)}
+                            className="px-2 py-1 text-[#212121] hover:text-[#212121] hover:bg-gray-100 rounded transition-all text-lg font-bold"
+                          >
+                            →
+                          </button>
+                        </div>
+                      </div>
                       <p className="text-xl md:text-2xl lg:text-3xl font-bold text-[#212121] leading-relaxed">
                         "{currentEmployee.status_note}"
                       </p>
