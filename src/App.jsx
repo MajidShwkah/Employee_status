@@ -26,6 +26,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // Session duration: 15 minutes
 const SESSION_DURATION = 15 * 60 * 1000;
 
+// Maximum busy duration: 24 hours (1440 minutes)
+const MAX_BUSY_DURATION_MINUTES = 24 * 60; // 1440 minutes
+
 const App = () => {
   const [view, setView] = useState('public'); // public, employee, admin
   const [employees, setEmployees] = useState([]);
@@ -44,6 +47,7 @@ const App = () => {
   const [busyDuration, setBusyDuration] = useState(30);
   const [customDuration, setCustomDuration] = useState('');
   const [useCustomDuration, setUseCustomDuration] = useState(false);
+  const [durationWarning, setDurationWarning] = useState('');
   const customDurationTimeoutRef = useRef(null);
 
   // Profile editing state
@@ -580,9 +584,19 @@ const App = () => {
           alert('Please enter a valid custom duration');
           return;
         }
+        if (durationMinutes > MAX_BUSY_DURATION_MINUTES) {
+          alert(`Maximum busy duration is ${MAX_BUSY_DURATION_MINUTES} minutes (24 hours). Please enter a value between 1 and ${MAX_BUSY_DURATION_MINUTES}.`);
+          return;
+        }
       } else {
         durationMinutes = busyDuration;
       }
+    }
+    
+    // Validate duration override as well
+    if (durationMinutes > MAX_BUSY_DURATION_MINUTES) {
+      alert(`Maximum busy duration is ${MAX_BUSY_DURATION_MINUTES} minutes (24 hours). Please enter a value between 1 and ${MAX_BUSY_DURATION_MINUTES}.`);
+      return;
     }
 
     const updates = {
@@ -993,7 +1007,9 @@ const App = () => {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  // Get time remaining in MM:SS format for inline display (e.g., "10:25")
+  // Get time remaining in MM:SS or HH:MM format for inline display
+  // If > 59 minutes, show as hours:minutes (e.g., "2:30" for 2h 30m)
+  // If <= 59 minutes, show as minutes:seconds (e.g., "45:30" for 45m 30s)
   const getTimeRemainingFormatted = (busyUntil) => {
     if (!busyUntil) return null;
     const now = Date.now();
@@ -1002,9 +1018,18 @@ const App = () => {
     
     if (diff <= 0) return null; // Don't show expired timer inline
     
-    const minutes = Math.floor(diff / 60000);
+    const totalMinutes = Math.floor(diff / 60000);
     const seconds = Math.floor((diff % 60000) / 1000);
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    
+    // If more than 59 minutes, show as hours:minutes
+    if (totalMinutes >= 60) {
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      return `${hours}:${minutes.toString().padStart(2, '0')}`;
+    } else {
+      // If 59 minutes or less, show as minutes:seconds
+      return `${totalMinutes}:${seconds.toString().padStart(2, '0')}`;
+    }
   };
 
   // Timer component
@@ -1142,14 +1167,22 @@ const App = () => {
             <h3 className={`text-lg font-bold mb-2 truncate ${statusColors.text}`}>
               {employee.full_name}
             </h3>
-            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold ${statusColors.badge} shadow-sm`}>
+            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold ${statusColors.badge} shadow-sm whitespace-nowrap`}>
               <span>{statusColors.label}</span>
-              {!isFree && !isImportant && timerFormatted && (
-                <>
-                  <span className="text-white/70">-</span>
-                  <span className="text-white/90 font-mono">{timerFormatted}</span>
-                </>
-              )}
+              {!isFree && !isImportant && timerFormatted && (() => {
+                const now = Date.now();
+                const end = new Date(employee.busy_until).getTime();
+                const diff = end - now;
+                const totalMinutes = Math.floor(diff / 60000);
+                const isHours = totalMinutes >= 60;
+                return (
+                  <>
+                    <span className="text-white/70">-</span>
+                    <span className="text-white/90 font-mono">{timerFormatted}</span>
+                    <span className="text-white/80 text-[10px] ml-0.5">{isHours ? 'h' : 'm'}</span>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -1715,7 +1748,13 @@ const App = () => {
                             if (newUseCustom && currentUser?.status === 'busy' && customDuration) {
                               const customMin = parseInt(customDuration);
                               if (!isNaN(customMin) && customMin > 0) {
-                                updateStatus('busy', customMin);
+                                if (customMin > MAX_BUSY_DURATION_MINUTES) {
+                                  alert(`Maximum busy duration is ${MAX_BUSY_DURATION_MINUTES} minutes (24 hours).`);
+                                  setCustomDuration(MAX_BUSY_DURATION_MINUTES.toString());
+                                  updateStatus('busy', MAX_BUSY_DURATION_MINUTES);
+                                } else {
+                                  updateStatus('busy', customMin);
+                                }
                               }
                             }
                           }}
@@ -1728,47 +1767,97 @@ const App = () => {
                           Custom
                         </button>
                         {useCustomDuration && (
-                          <div className="flex-1 flex items-center gap-2">
-                            <input
-                              type="number"
-                              min="1"
-                              value={customDuration}
-                              onChange={(e) => {
-                                const newValue = e.target.value;
-                                setCustomDuration(newValue);
-                                
-                                // Clear existing timeout
-                                if (customDurationTimeoutRef.current) {
-                                  clearTimeout(customDurationTimeoutRef.current);
-                                }
-                                
-                                // Auto-update if already busy and valid input (with debounce)
-                                if (currentUser?.status === 'busy' && newValue) {
-                                  const customMin = parseInt(newValue);
-                                  if (!isNaN(customMin) && customMin > 0) {
-                                    // Debounce the update - wait 1 second after user stops typing
-                                    customDurationTimeoutRef.current = setTimeout(() => {
+                          <div className="flex-1 flex flex-col gap-2">
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min="1"
+                                max={MAX_BUSY_DURATION_MINUTES}
+                                value={customDuration}
+                                onChange={(e) => {
+                                  let newValue = e.target.value;
+                                  
+                                  // Only allow digits
+                                  if (newValue && !/^\d+$/.test(newValue)) {
+                                    return;
+                                  }
+                                  
+                                  // Prevent values over the maximum - cap it at 1440
+                                  if (newValue && parseInt(newValue) > MAX_BUSY_DURATION_MINUTES) {
+                                    newValue = MAX_BUSY_DURATION_MINUTES.toString();
+                                    setDurationWarning(`Maximum duration is ${MAX_BUSY_DURATION_MINUTES} minutes (24 hours). Value capped.`);
+                                    // Clear warning after 3 seconds
+                                    setTimeout(() => setDurationWarning(''), 3000);
+                                  } else {
+                                    setDurationWarning('');
+                                  }
+                                  
+                                  setCustomDuration(newValue);
+                                  
+                                  // Clear existing timeout
+                                  if (customDurationTimeoutRef.current) {
+                                    clearTimeout(customDurationTimeoutRef.current);
+                                  }
+                                  
+                                  // Auto-update if already busy and valid input (with debounce)
+                                  if (currentUser?.status === 'busy' && newValue) {
+                                    const customMin = parseInt(newValue);
+                                    if (!isNaN(customMin) && customMin > 0 && customMin <= MAX_BUSY_DURATION_MINUTES) {
+                                      // Debounce the update - wait 1 second after user stops typing
+                                      customDurationTimeoutRef.current = setTimeout(() => {
+                                        updateStatus('busy', customMin);
+                                      }, 1000);
+                                    }
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  // Prevent typing if the value would exceed max
+                                  if (e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Tab') {
+                                    const currentValue = parseInt(customDuration) || 0;
+                                    const newDigit = parseInt(e.key);
+                                    if (!isNaN(newDigit)) {
+                                      const potentialValue = currentValue * 10 + newDigit;
+                                      if (potentialValue > MAX_BUSY_DURATION_MINUTES) {
+                                        e.preventDefault();
+                                        setDurationWarning(`Maximum duration is ${MAX_BUSY_DURATION_MINUTES} minutes (24 hours).`);
+                                        setTimeout(() => setDurationWarning(''), 3000);
+                                      }
+                                    }
+                                  }
+                                }}
+                                onBlur={(e) => {
+                                  // Clear timeout and update immediately when user leaves the field
+                                  if (customDurationTimeoutRef.current) {
+                                    clearTimeout(customDurationTimeoutRef.current);
+                                  }
+                                  
+                                  // Clear warning
+                                  setDurationWarning('');
+                                  
+                                  if (currentUser?.status === 'busy' && e.target.value) {
+                                    let customMin = parseInt(e.target.value);
+                                    if (!isNaN(customMin) && customMin > 0) {
+                                      // Cap at maximum if exceeded
+                                      if (customMin > MAX_BUSY_DURATION_MINUTES) {
+                                        customMin = MAX_BUSY_DURATION_MINUTES;
+                                        setCustomDuration(MAX_BUSY_DURATION_MINUTES.toString());
+                                      }
                                       updateStatus('busy', customMin);
-                                    }, 1000);
+                                    }
                                   }
-                                }
-                              }}
-                              onBlur={(e) => {
-                                // Clear timeout and update immediately when user leaves the field
-                                if (customDurationTimeoutRef.current) {
-                                  clearTimeout(customDurationTimeoutRef.current);
-                                }
-                                if (currentUser?.status === 'busy' && e.target.value) {
-                                  const customMin = parseInt(e.target.value);
-                                  if (!isNaN(customMin) && customMin > 0) {
-                                    updateStatus('busy', customMin);
-                                  }
-                                }
-                              }}
-                              placeholder="Minutes"
-                              className="flex-1 px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                            />
-                            <span className="text-[#212121]/70 text-sm">minutes</span>
+                                }}
+                                placeholder={`Minutes (max ${MAX_BUSY_DURATION_MINUTES})`}
+                                className={`flex-1 px-4 py-3 bg-white border rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all ${
+                                  durationWarning ? 'border-orange-400' : 'border-gray-300'
+                                }`}
+                              />
+                              <span className="text-[#212121]/70 text-sm whitespace-nowrap">minutes (max 24h)</span>
+                            </div>
+                            {durationWarning && (
+                              <div className="text-xs text-orange-600 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
+                                ⚠️ {durationWarning}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
