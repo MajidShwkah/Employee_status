@@ -50,6 +50,10 @@ const App = () => {
   const [useCustomDuration, setUseCustomDuration] = useState(false);
   const [durationWarning, setDurationWarning] = useState('');
   const customDurationTimeoutRef = useRef(null);
+  const realtimeChannelRef = useRef(null);
+  const isMountedRef = useRef(true);
+  const pollingIntervalRef = useRef(null);
+  const healthCheckIntervalRef = useRef(null);
 
   // Profile editing state
   const [showProfileSettings, setShowProfileSettings] = useState(false);
@@ -89,6 +93,8 @@ const App = () => {
 
   // Initialize and setup realtime subscription
   useEffect(() => {
+    console.log('🚀 Setting up realtime subscription and polling...');
+    
     // Only check user on mount, not on every render
     const initApp = async () => {
       await checkUser();
@@ -111,10 +117,6 @@ const App = () => {
       setInterval(fetchPrayerTimes, 24 * 60 * 60 * 1000);
     }, msUntilMidnight);
     
-    return () => {
-      clearTimeout(prayerTimesRefresh);
-    };
-    
     // Periodically refresh session to keep user logged in
     // This ensures session persists across page navigations
     const sessionRefreshInterval = setInterval(() => {
@@ -133,128 +135,237 @@ const App = () => {
     }, 60000); // Check every minute
 
     // Setup realtime subscription with proper status monitoring
-    const channel = supabase
-      .channel('public:profiles', {
-        config: {
-          broadcast: { self: true }, // Receive our own updates too
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+    
+    const setupRealtimeSubscription = () => {
+      console.log('🔧 Setting up realtime subscription...');
+      // Remove existing channel if any
+      if (realtimeChannelRef.current) {
+        try {
+          supabase.removeChannel(realtimeChannelRef.current);
+          console.log('🗑️ Removed old channel');
+        } catch (e) {
+          console.warn('Error removing old channel:', e);
         }
-      })
-      .on('postgres_changes', 
-        { 
-          event: '*', 
-          schema: 'public', 
-          table: 'profiles' 
-        }, 
-        (payload) => {
-          console.log('🔔 Realtime update received:', payload);
-          
-          if (payload.eventType === 'INSERT') {
-            console.log('➕ New employee added:', payload.new);
-            setEmployees(prev => {
-              // Check if already exists (avoid duplicates)
-              if (prev.find(emp => emp.id === payload.new.id)) {
-                return prev;
-              }
-              return [...prev, payload.new];
-            });
-          } else if (payload.eventType === 'UPDATE') {
-            console.log('🔄 Employee updated:', payload.new.full_name, 'Status:', payload.new.status);
+        realtimeChannelRef.current = null;
+      }
+      
+      const channelName = `profiles-realtime-${Date.now()}`;
+      console.log('📡 Creating channel:', channelName);
+      const channel = supabase
+        .channel(channelName, {
+          config: {
+            broadcast: { self: true },
+          }
+        })
+        .on('postgres_changes', 
+          { 
+            event: '*', 
+            schema: 'public', 
+            table: 'profiles' 
+          }, 
+          (payload) => {
+            console.log('🔔 Realtime update received:', payload);
+            reconnectAttempts = 0; // Reset on successful update
             
-            // Find the previous state to detect changes
-            setEmployees(prev => {
-              const oldEmp = prev.find(emp => emp.id === payload.new.id);
+            if (payload.eventType === 'INSERT') {
+              console.log('➕ New employee added:', payload.new);
+              setEmployees(prev => {
+                // Check if already exists (avoid duplicates)
+                if (prev.find(emp => emp.id === payload.new.id)) {
+                  return prev;
+                }
+                return [...prev, payload.new];
+              });
+            } else if (payload.eventType === 'UPDATE') {
+              console.log('🔄 Employee updated:', payload.new?.full_name || payload.new?.id, 'Status:', payload.new?.status);
               
-              // Check if status changed
-              if (oldEmp && oldEmp.status !== payload.new.status) {
-                const statusConfig = {
-                  'free': { emoji: '✅', label: 'Available' },
-                  'busy': { emoji: '🔴', label: 'Busy' },
-                  'important': { emoji: '⚠️', label: 'Important' }
-                };
-                const config = statusConfig[payload.new.status] || { emoji: '🔄', label: payload.new.status };
-                setNotification({
-                  type: 'status',
-                  message: `${payload.new.full_name} is now ${config.label}`,
-                  emoji: config.emoji,
-                  name: payload.new.full_name,
-                  status: payload.new.status
+              // Find the previous state to detect changes
+              setEmployees(prev => {
+                const oldEmp = prev.find(emp => emp.id === payload.new.id);
+                
+                // Check if status changed
+                if (oldEmp && oldEmp.status !== payload.new.status) {
+                  const statusConfig = {
+                    'free': { emoji: '✅', label: 'Available' },
+                    'busy': { emoji: '🔴', label: 'Busy' },
+                    'important': { emoji: '⚠️', label: 'Important Only' }
+                  };
+                  const config = statusConfig[payload.new.status] || { emoji: '🔄', label: payload.new.status };
+                  
+                  // Special message for Important status
+                  let message = `${payload.new.full_name} is now ${config.label}`;
+                  if (payload.new.status === 'important') {
+                    message = `${payload.new.full_name} is available when something important only`;
+                  }
+                  
+                  setNotification({
+                    type: 'status',
+                    message: message,
+                    emoji: config.emoji,
+                    name: payload.new.full_name,
+                    status: payload.new.status
+                  });
+                }
+                
+                // Check if status note changed (including when it's cleared)
+                if (oldEmp && oldEmp.status_note !== payload.new.status_note) {
+                  if (payload.new.status_note) {
+                    setNotification({
+                      type: 'note',
+                      message: `${payload.new.full_name} says: "${payload.new.status_note}"`,
+                      emoji: '💬',
+                      name: payload.new.full_name,
+                      note: payload.new.status_note
+                    });
+                  }
+                }
+                
+                const updated = prev.map(emp => {
+                  if (emp.id === payload.new.id) {
+                    // Preserve avatar_url if it's missing in the update
+                    const preservedAvatar = (payload.new.avatar_url && payload.new.avatar_url.trim() !== '') 
+                      ? payload.new.avatar_url 
+                      : emp.avatar_url;
+                    const updatedEmp = { ...payload.new, avatar_url: preservedAvatar };
+                    console.log('✅ Updated employee in list:', updatedEmp.full_name, '→ Status:', updatedEmp.status);
+                    return updatedEmp;
+                  }
+                  return emp;
                 });
-              }
+                return updated;
+              });
               
-              // Check if status note changed (and is not empty)
-              if (oldEmp && oldEmp.status_note !== payload.new.status_note && payload.new.status_note) {
-                setNotification({
-                  type: 'note',
-                  message: `${payload.new.full_name} says: "${payload.new.status_note}"`,
-                  emoji: '💬',
-                  name: payload.new.full_name,
-                  note: payload.new.status_note
-                });
-              }
-              
-              const updated = prev.map(emp => {
-                if (emp.id === payload.new.id) {
-                  // Preserve avatar_url if it's missing in the update
+              // If the update is for the current user, also update currentUser state
+              setCurrentUser(prev => {
+                if (prev && payload.new.id === prev.id) {
                   const preservedAvatar = (payload.new.avatar_url && payload.new.avatar_url.trim() !== '') 
                     ? payload.new.avatar_url 
-                    : emp.avatar_url;
-                  const updatedEmp = { ...payload.new, avatar_url: preservedAvatar };
-                  console.log('✅ Updated employee in list:', updatedEmp.full_name, '→ Status:', updatedEmp.status);
-                  return updatedEmp;
+                    : prev.avatar_url;
+                  
+                  const updatedUser = { 
+                    ...prev, 
+                    ...payload.new,
+                    avatar_url: preservedAvatar
+                  };
+                  console.log('✅ Updated current user:', updatedUser.full_name, '→ Status:', updatedUser.status);
+                  return updatedUser;
                 }
-                return emp;
+                return prev;
               });
-              return updated;
-            });
-            
-            // If the update is for the current user, also update currentUser state
-            setCurrentUser(prev => {
-              if (prev && payload.new.id === prev.id) {
-                const preservedAvatar = (payload.new.avatar_url && payload.new.avatar_url.trim() !== '') 
-                  ? payload.new.avatar_url 
-                  : prev.avatar_url;
-                
-                const updatedUser = { 
-                  ...prev, 
-                  ...payload.new,
-                  avatar_url: preservedAvatar
-                };
-                console.log('✅ Updated current user:', updatedUser.full_name, '→ Status:', updatedUser.status);
-                return updatedUser;
-              }
-              return prev;
-            });
-          } else if (payload.eventType === 'DELETE') {
-            console.log('➖ Employee deleted:', payload.old);
-            setEmployees(prev => prev.filter(emp => emp.id !== payload.old.id));
-            
-            // If current user was deleted, log them out
-            setCurrentUser(prev => {
-              if (prev && payload.old.id === prev.id) {
-                localStorage.removeItem('currentUserId');
-                localStorage.removeItem('sessionExpiry');
-                return null;
-              }
-              return prev;
-            });
+            } else if (payload.eventType === 'DELETE') {
+              console.log('➖ Employee deleted:', payload.old);
+              setEmployees(prev => prev.filter(emp => emp.id !== payload.old.id));
+              
+              // If current user was deleted, log them out
+              setCurrentUser(prev => {
+                if (prev && payload.old.id === prev.id) {
+                  localStorage.removeItem('currentUserId');
+                  localStorage.removeItem('sessionExpiry');
+                  return null;
+                }
+                return prev;
+              });
+            }
           }
-        }
-      )
-      .subscribe((status) => {
+        );
+      
+      // Store channel reference BEFORE subscribing
+      realtimeChannelRef.current = channel;
+      
+      // Subscribe and handle status
+      channel.subscribe((status, err) => {
+        console.log('📡 Realtime subscription status:', status, err ? `Error: ${err}` : '');
         if (status === 'SUBSCRIBED') {
           console.log('✅ Realtime subscription ACTIVE - listening for changes');
+          reconnectAttempts = 0; // Reset on successful subscription
         } else if (status === 'CHANNEL_ERROR') {
-          console.error('❌ Realtime subscription ERROR - check Supabase configuration');
+          console.error('❌ Realtime subscription ERROR:', err);
+          reconnectAttempts++;
+          if (reconnectAttempts < maxReconnectAttempts) {
+            setTimeout(() => {
+              console.log(`🔄 Attempting to resubscribe (attempt ${reconnectAttempts + 1}/${maxReconnectAttempts})...`);
+              setupRealtimeSubscription();
+            }, 3000);
+          } else {
+            console.error('❌ Max reconnection attempts reached. Using polling fallback.');
+          }
         } else if (status === 'TIMED_OUT') {
           console.warn('⚠️ Realtime subscription TIMED OUT - retrying...');
-        } else {
-          console.log('🔄 Realtime subscription status:', status);
+          reconnectAttempts++;
+          if (reconnectAttempts < maxReconnectAttempts) {
+            setTimeout(() => {
+              console.log(`🔄 Attempting to resubscribe after timeout (attempt ${reconnectAttempts + 1}/${maxReconnectAttempts})...`);
+              setupRealtimeSubscription();
+            }, 2000);
+          }
+        } else if (status === 'CLOSED') {
+          console.warn('⚠️ Realtime subscription CLOSED - resubscribing...');
+          reconnectAttempts++;
+          if (reconnectAttempts < maxReconnectAttempts) {
+            setTimeout(() => {
+              console.log(`🔄 Attempting to resubscribe after close (attempt ${reconnectAttempts + 1}/${maxReconnectAttempts})...`);
+              setupRealtimeSubscription();
+            }, 2000);
+          }
         }
       });
+      
+      return channel;
+    };
+    
+    // Initial subscription setup
+    console.log('🔧 Initializing realtime subscription...');
+    setupRealtimeSubscription();
+    
+    // Polling fallback - ensures updates are always visible (every 3 seconds)
+    // This is the reliable backup that always works even if realtime fails
+    pollingIntervalRef.current = setInterval(() => {
+      if (isMountedRef.current) {
+        fetchEmployees();
+      }
+    }, 3000);
+    
+    // Health check for realtime subscription
+    healthCheckIntervalRef.current = setInterval(() => {
+      if (!isMountedRef.current) return;
+      
+      if (realtimeChannelRef.current) {
+        const channelState = realtimeChannelRef.current.state;
+        if (channelState !== 'joined' && channelState !== 'joining' && reconnectAttempts < maxReconnectAttempts) {
+          setupRealtimeSubscription();
+        }
+      } else if (reconnectAttempts < maxReconnectAttempts) {
+        setupRealtimeSubscription();
+      }
+    }, 15000);
 
     return () => {
+      isMountedRef.current = false;
+      
+      clearTimeout(prayerTimesRefresh);
       clearInterval(sessionRefreshInterval);
-      supabase.removeChannel(channel);
+      
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current);
+        healthCheckIntervalRef.current = null;
+      }
+      
+      if (realtimeChannelRef.current) {
+        try {
+          const channel = realtimeChannelRef.current;
+          realtimeChannelRef.current = null;
+          supabase.removeChannel(channel);
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
     };
   }, []); // Empty dependency - subscription is set up once on mount
 
@@ -1468,7 +1579,7 @@ const App = () => {
           glow: 'bg-[#f97316]',
           indicator: 'bg-white',
           badge: 'bg-white/20 backdrop-blur-sm text-white border border-white/30',
-          label: '⚠ Important',
+          label: '⚠ Important Only',
           text: 'text-white'
         };
       } else {
@@ -1964,7 +2075,7 @@ const App = () => {
                         'bg-[#991b1b]'
                       }`}>
                         {currentUser.status === 'free' ? '✓ Available' : 
-                         currentUser.status === 'important' ? '⚠ Important' : 
+                         currentUser.status === 'important' ? '⚠ Important Only' : 
                          '✕ Busy'}
                       </div>
                       {currentUser.role === 'admin' && (
@@ -2317,7 +2428,7 @@ const App = () => {
                     onClick={() => updateStatus('important')}
                     className="py-4 bg-[#f97316] text-white rounded-xl hover:bg-[#f97316]/90 font-bold text-lg shadow-sm transition-all"
                   >
-                    ⚠ Important
+                    ⚠ Important Only
                   </button>
                 </div>
               </div>
@@ -2449,7 +2560,7 @@ const App = () => {
                                 : 'bg-[#991b1b] border border-[#991b1b]'
                             }`}>
                               {emp.status === 'free' ? 'Free' : 
-                               emp.status === 'important' ? 'Important' : 
+                               emp.status === 'important' ? 'Important Only' : 
                                'Busy'}
                             </span>
                           </div>
