@@ -2,45 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Scrolling News Bar Animation - LEFT TO RIGHT (Continuous Seamless Loop) */
-@keyframes scroll-news-left-right {
-  0% {
-    transform: translateX(-50%);
-  }
-  100% {
-    transform: translateX(0);
-  }
-}
+/* ============================================
+   News Ticker - Now using requestAnimationFrame in JS
+   for smooth, glitch-free scrolling with dynamic updates.
+   See NewsTicker component in App.jsx
+   ============================================ */
 
-.animate-scroll-news-left-right {
-  animation: scroll-news-left-right 30s linear infinite;
+/* GPU acceleration helper for smooth transforms */
+.will-change-transform {
   will-change: transform;
-}
-
-.animate-scroll-news-left-right:hover {
-  animation-play-state: paused;
-}
-
-/* Scrolling text animation for status notes (news ticker effect) */
-@keyframes scroll-text {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(calc(-50%));
-  }
-}
-
-.animate-scroll-text {
-  animation: scroll-text 15s linear infinite;
-  display: inline-block;
-  will-change: transform;
-  white-space: nowrap;
-}
-
-/* Pause on hover */
-.animate-scroll-text:hover {
-  animation-play-state: paused;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  perspective: 1000px;
+  -webkit-perspective: 1000px;
 }
 
 /* Custom animations */

@@ -3,6 +3,189 @@ import { createClient } from '@supabase/supabase-js';
 import { Clock, User, Plus, Trash2, Edit2, LogOut, Eye, EyeOff, Settings, Upload, Save, X, MessageSquare, Moon, Sun } from 'lucide-react';
 import adhanAudio from './Adan.mp3';
 
+// ============================================
+// NewsTicker Component - Smooth Infinite Scroll
+// Uses requestAnimationFrame for glitch-free animation
+// ============================================
+const NewsTicker = React.memo(({ employees }) => {
+  const contentRef = useRef(null);
+  const animationRef = useRef(null);
+  const positionRef = useRef(null); // null = not initialized
+  const isPausedRef = useRef(false);
+  const contentWidthRef = useRef(0);
+  const lastTimeRef = useRef(0);
+  
+  // Speed: pixels per second (adjust for desired scroll speed)
+  const SCROLL_SPEED = 80;
+  
+  // Memoize filtered employees to prevent unnecessary re-renders
+  const employeesWithNotes = React.useMemo(() => 
+    employees.filter(emp => emp.status_note && emp.status_note.trim() !== ''),
+    [employees]
+  );
+  
+  // Create stable key for detecting actual content changes
+  const contentKey = React.useMemo(() => 
+    employeesWithNotes.map(e => `${e.id}-${e.status_note}`).join('|'),
+    [employeesWithNotes]
+  );
+  
+  // Duplicate the content for seamless looping (memoized)
+  const duplicatedEmployees = React.useMemo(() => 
+    [...employeesWithNotes, ...employeesWithNotes],
+    [employeesWithNotes]
+  );
+  
+  // Single useEffect for measurement and animation
+  useEffect(() => {
+    if (employeesWithNotes.length === 0) return;
+    
+    // Measure content after DOM has rendered
+    const measureAndStart = () => {
+      if (!contentRef.current) return;
+      
+      const children = contentRef.current.children;
+      if (children.length === 0) return;
+      
+      // Measure width of first half (one complete set)
+      let totalWidth = 0;
+      const halfLength = Math.floor(children.length / 2);
+      for (let i = 0; i < halfLength; i++) {
+        const child = children[i];
+        const style = window.getComputedStyle(child);
+        const marginLeft = parseFloat(style.marginLeft) || 0;
+        const marginRight = parseFloat(style.marginRight) || 0;
+        totalWidth += child.offsetWidth + marginLeft + marginRight;
+      }
+      
+      contentWidthRef.current = totalWidth;
+      
+      // Initialize position only if not already set, or if content changed significantly
+      if (positionRef.current === null || Math.abs(positionRef.current) > totalWidth * 2) {
+        positionRef.current = -totalWidth;
+      }
+      
+      // Apply initial transform
+      contentRef.current.style.transform = `translateX(${positionRef.current}px)`;
+    };
+    
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(measureAndStart);
+    
+    // Animation loop
+    const animate = (currentTime) => {
+      // Skip if not measured yet
+      if (contentWidthRef.current === 0 || positionRef.current === null) {
+        animationRef.current = requestAnimationFrame(animate);
+        return;
+      }
+      
+      if (!lastTimeRef.current) {
+        lastTimeRef.current = currentTime;
+      }
+      
+      const deltaTime = currentTime - lastTimeRef.current;
+      lastTimeRef.current = currentTime;
+      
+      // Cap deltaTime to prevent huge jumps (e.g., after tab switch)
+      const cappedDelta = Math.min(deltaTime, 50);
+      
+      if (!isPausedRef.current) {
+        // Move LEFT TO RIGHT: increase position
+        positionRef.current += (SCROLL_SPEED * cappedDelta) / 1000;
+        
+        // Seamless loop: reset when one full set has scrolled through
+        if (positionRef.current >= 0) {
+          positionRef.current = -contentWidthRef.current;
+        }
+        
+        // Apply transform
+        if (contentRef.current) {
+          contentRef.current.style.transform = `translateX(${positionRef.current}px)`;
+        }
+      }
+      
+      animationRef.current = requestAnimationFrame(animate);
+    };
+    
+    // Start animation
+    animationRef.current = requestAnimationFrame(animate);
+    
+    // Cleanup
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+      lastTimeRef.current = 0;
+    };
+  }, [contentKey]); // Only re-run when actual content changes
+  
+  // Handle pause on hover
+  const handleMouseEnter = React.useCallback(() => {
+    isPausedRef.current = true;
+  }, []);
+  
+  const handleMouseLeave = React.useCallback(() => {
+    isPausedRef.current = false;
+    lastTimeRef.current = 0; // Reset to prevent jump
+  }, []);
+  
+  // Don't render if no notes
+  if (employeesWithNotes.length === 0) return null;
+  
+  return (
+    <div 
+      className="bg-gradient-to-r from-white to-gray-50 rounded-2xl border border-gray-200 shadow-md mt-8 overflow-hidden"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      <div className="relative h-24 md:h-28 flex items-center bg-gradient-to-r from-[#F8F5EF] via-white to-[#F8F5EF] overflow-hidden">
+        {/* Scrolling container - NO CSS transitions, only JS transform */}
+        <div 
+          ref={contentRef}
+          className="flex items-center whitespace-nowrap"
+          style={{ 
+            willChange: 'transform',
+            backfaceVisibility: 'hidden',
+            WebkitBackfaceVisibility: 'hidden'
+          }}
+        >
+          {duplicatedEmployees.map((employee, index) => (
+            <div
+              key={`ticker-${employee.id}-${index}`}
+              className="flex items-center gap-6 mx-10 flex-shrink-0 px-6 py-3 rounded-xl bg-white/60 backdrop-blur-sm border border-gray-100 shadow-sm"
+            >
+              {/* Avatar */}
+              <div className="flex-shrink-0">
+                <img 
+                  src={employee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(employee.full_name)}&background=4F46E5&color=fff&size=128`}
+                  alt={employee.full_name}
+                  className="w-14 h-14 md:w-16 md:h-16 rounded-full border-4 border-white shadow-lg"
+                  loading="eager"
+                />
+              </div>
+              
+              {/* Name and Note */}
+              <div className="flex flex-col gap-1 min-w-0">
+                <span className="text-xs md:text-sm font-semibold text-[#212121]/60 uppercase tracking-wide">
+                  {employee.full_name}
+                </span>
+                <span className="text-base md:text-lg font-bold text-[#212121] leading-tight">
+                  {employee.status_note}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+        
+        {/* Fade edges for polish */}
+        <div className="absolute left-0 top-0 bottom-0 w-16 bg-gradient-to-r from-[#F8F5EF] to-transparent pointer-events-none z-10" />
+        <div className="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-[#F8F5EF] to-transparent pointer-events-none z-10" />
+      </div>
+    </div>
+  );
+});
+
 // Simple password hashing using Web Crypto API
 const hashPassword = async (password) => {
   const encoder = new TextEncoder();
@@ -1821,62 +2004,8 @@ const App = () => {
               </button>
             </div>
 
-            {/* News Bar: Scrolling Notes Ticker */}
-            {(() => {
-              const employeesWithNotes = employees.filter(emp => emp.status_note && emp.status_note.trim() !== '');
-              if (employeesWithNotes.length === 0) return null;
-              
-              // Smart duplication: duplicate more times when there are fewer notes
-              // This ensures smooth scrolling even with just 1-2 notes
-              // Always use even numbers for seamless -50% animation
-              let duplicationCount = 2; // Default: duplicate twice
-              if (employeesWithNotes.length === 1) {
-                duplicationCount = 8; // For 1 note, duplicate 8 times for smooth scrolling
-              } else if (employeesWithNotes.length === 2) {
-                duplicationCount = 4; // For 2 notes, duplicate 4 times
-              } else if (employeesWithNotes.length === 3) {
-                duplicationCount = 4; // For 3 notes, duplicate 4 times
-              }
-              
-              // Create duplicated array
-              const duplicatedEmployees = Array(duplicationCount).fill(employeesWithNotes).flat();
-              
-              return (
-                <div className="bg-gradient-to-r from-white to-gray-50 rounded-2xl border border-gray-200 shadow-md mt-8 overflow-hidden">
-                  <div className="relative h-24 md:h-28 flex items-center bg-gradient-to-r from-[#F8F5EF] via-white to-[#F8F5EF] overflow-hidden">
-                    {/* Scrolling container - LEFT TO RIGHT with seamless loop */}
-                    <div className="flex items-center animate-scroll-news-left-right whitespace-nowrap" style={{ transform: 'translateX(-50%)' }}>
-                      {duplicatedEmployees.map((employee, index) => (
-                        <div
-                          key={`${employee.id}-${index}`}
-                          className="flex items-center gap-6 mx-10 flex-shrink-0 px-6 py-3 rounded-xl bg-white/60 backdrop-blur-sm border border-gray-100 shadow-sm"
-                        >
-                          {/* Avatar */}
-                          <div className="flex-shrink-0">
-                            <img 
-                              src={employee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(employee.full_name)}&background=4F46E5&color=fff&size=128`}
-                              alt={employee.full_name}
-                              className="w-14 h-14 md:w-16 md:h-16 rounded-full border-4 border-white shadow-lg"
-                            />
-                          </div>
-                          
-                          {/* Name and Note */}
-                          <div className="flex flex-col gap-1 min-w-0">
-                            <span className="text-xs md:text-sm font-semibold text-[#212121]/60 uppercase tracking-wide">
-                              {employee.full_name}
-                            </span>
-                            <span className="text-base md:text-lg font-bold text-[#212121] leading-tight">
-                              {employee.status_note}
-                            </span>
-                          </div>
-                          
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
+            {/* News Bar: Scrolling Notes Ticker - Using requestAnimationFrame for smooth animation */}
+            <NewsTicker employees={employees} />
           </div>
           
           {/* Employee Cards Grid - More compact */}
