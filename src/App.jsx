@@ -79,8 +79,7 @@ const App = () => {
   // Notification state
   const [notification, setNotification] = useState(null);
   
-  // Notes gallery state
-  const [currentNoteIndex, setCurrentNoteIndex] = useState(0);
+  // Note: Removed currentNoteIndex - now using continuous scrolling news bar
 
   // Prayer times state
   const [prayerTimes, setPrayerTimes] = useState(null);
@@ -379,17 +378,7 @@ const App = () => {
     }
   }, [notification]);
 
-  // Auto-cycle through notes gallery every 5 seconds
-  useEffect(() => {
-    const employeesWithNotes = employees.filter(emp => emp.status_note && emp.status_note.trim() !== '');
-    if (employeesWithNotes.length <= 1) return;
-    
-    const interval = setInterval(() => {
-      setCurrentNoteIndex(prev => (prev + 1) % employeesWithNotes.length);
-    }, 5000); // Change note every 5 seconds
-    
-    return () => clearInterval(interval);
-  }, [employees]);
+  // Note: Removed auto-cycle logic - now using continuous scrolling news bar
 
   // Auto-update status to 'free' when busy timer expires
   // Only applies to employees who set a timer (have busy_until set)
@@ -1527,6 +1516,7 @@ const App = () => {
     );
   };
 
+
   // Employee Card Component - Modern Design with Full Color Background
   const EmployeeCard = ({ employee }) => {
     const isFree = employee.status === 'free';
@@ -1764,27 +1754,46 @@ const App = () => {
               
               {/* Prayer & Date/Time Widget - Center */}
               {prayerDateInfo && prayerTimes && nextPrayer && (
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm h-20 flex items-center gap-3 px-3 max-w-md">
-                  {/* Islamic Icon for Prayer */}
-                  <div className="flex-shrink-0">
-                    {nextPrayer.name === 'Fajr' ? (
-                      <Moon className="w-7 h-7 text-[#166534]" />
-                    ) : nextPrayer.name === 'Maghrib' || nextPrayer.name === 'Isha' ? (
-                      <Moon className="w-7 h-7 text-[#991b1b]" />
-                    ) : (
-                      <Sun className="w-7 h-7 text-[#f97316]" />
-                    )}
+                <div className="flex gap-2 items-center">
+                  {/* Area 1: Time with Digital Font - Same size as prayer */}
+                  {/* Area 1: Time Widget - Consistent Design */}
+                  <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl border-2 border-gray-700 shadow-lg p-3 w-[200px] h-20 flex flex-col justify-between">
+                    {/* Large Time Display */}
+                    <div className="text-center">
+                      <div className="text-4xl font-bold text-[#00ff41] font-mono tracking-wider drop-shadow-[0_0_10px_rgba(0,255,65,0.9)] leading-none">
+                        {currentTime}
+                      </div>
+                    </div>
+                    
+                    {/* Date and Day - One Line */}
+                    <div className="text-center">
+                      <span className="text-[10px] font-semibold text-gray-300 uppercase tracking-wider">
+                        {prayerDateInfo.gregorian?.weekday?.en}
+                      </span>
+                      <span className="text-[10px] text-gray-300 mx-1">•</span>
+                      <span className="text-[10px] font-bold text-gray-200">
+                        {prayerDateInfo.gregorian?.day} {prayerDateInfo.gregorian?.month?.en} {prayerDateInfo.gregorian?.year}
+                      </span>
+                    </div>
                   </div>
                   
-                  {/* Prayer Info */}
-                  <div className="flex-1 flex flex-col justify-center min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="text-sm font-bold text-[#212121]">Next Prayer: {nextPrayer.name}</span>
-                      <span className="text-sm font-bold text-[#166534] font-mono">{nextPrayer.time}</span>
-                      <span className="text-xs font-bold text-[#166534] font-mono">({countdown || 'Loading...'})</span>
+                  {/* Area 2: Next Prayer Widget - Two Lines, Bigger Font */}
+                  <div className="bg-gradient-to-br from-[#166534] to-[#15803d] rounded-xl border-2 border-[#166534] shadow-lg p-3 w-[200px] h-20 flex flex-col justify-center">
+                    {/* Line 1: Icon + Prayer Name + Time */}
+                    <div className="flex items-center justify-center gap-2 text-white mb-1">
+                      {nextPrayer.name === 'Fajr' ? (
+                        <Moon className="w-5 h-5 flex-shrink-0" />
+                      ) : nextPrayer.name === 'Maghrib' || nextPrayer.name === 'Isha' ? (
+                        <Moon className="w-5 h-5 flex-shrink-0" />
+                      ) : (
+                        <Sun className="w-5 h-5 flex-shrink-0" />
+                      )}
+                      <span className="text-lg font-bold">{nextPrayer.name}</span>
+                      <span className="text-lg font-mono font-bold">{nextPrayer.time}</span>
                     </div>
-                    <div className="text-xs text-[#212121]/70">
-                      {prayerDateInfo.gregorian?.weekday?.en}, {prayerDateInfo.gregorian?.day} {prayerDateInfo.gregorian?.month?.en} {prayerDateInfo.gregorian?.year} - {currentTime}
+                    {/* Line 2: Countdown in one line */}
+                    <div className="text-center text-sm font-mono font-semibold text-white/90">
+                      ({countdown || 'Loading...'})
                     </div>
                   </div>
                 </div>
@@ -1812,45 +1821,57 @@ const App = () => {
               </button>
             </div>
 
-            {/* Bottom Row: Notes Gallery (Full Width) */}
+            {/* News Bar: Scrolling Notes Ticker */}
             {(() => {
               const employeesWithNotes = employees.filter(emp => emp.status_note && emp.status_note.trim() !== '');
               if (employeesWithNotes.length === 0) return null;
               
-              const currentEmployee = employeesWithNotes[currentNoteIndex % employeesWithNotes.length];
+              // Smart duplication: duplicate more times when there are fewer notes
+              // This ensures smooth scrolling even with just 1-2 notes
+              // Always use even numbers for seamless -50% animation
+              let duplicationCount = 2; // Default: duplicate twice
+              if (employeesWithNotes.length === 1) {
+                duplicationCount = 8; // For 1 note, duplicate 8 times for smooth scrolling
+              } else if (employeesWithNotes.length === 2) {
+                duplicationCount = 4; // For 2 notes, duplicate 4 times
+              } else if (employeesWithNotes.length === 3) {
+                duplicationCount = 4; // For 3 notes, duplicate 4 times
+              }
+              
+              // Create duplicated array
+              const duplicatedEmployees = Array(duplicationCount).fill(employeesWithNotes).flat();
               
               return (
-                <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-200 shadow-sm mt-8">
-                  <div className="flex items-center gap-4">
-                    <img 
-                      src={currentEmployee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentEmployee.full_name)}&background=4F46E5&color=fff&size=128`}
-                      alt={currentEmployee.full_name}
-                      className="w-14 h-14 md:w-16 md:h-16 rounded-full border-2 border-white/40 shadow-lg flex-shrink-0"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <p className="text-lg md:text-xl font-extrabold text-[#212121] truncate">{currentEmployee.full_name}</p>
-                        <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-                          <button
-                            onClick={() => setCurrentNoteIndex(prev => (prev - 1 + employeesWithNotes.length) % employeesWithNotes.length)}
-                            className="px-2 py-1 text-[#212121] hover:text-[#212121] hover:bg-gray-100 rounded transition-all text-lg font-bold"
-                          >
-                            ←
-                          </button>
-                          <span className="text-xs md:text-sm text-[#212121]/70 font-semibold">
-                            {currentNoteIndex % employeesWithNotes.length + 1} / {employeesWithNotes.length}
-                          </span>
-                          <button
-                            onClick={() => setCurrentNoteIndex(prev => (prev + 1) % employeesWithNotes.length)}
-                            className="px-2 py-1 text-[#212121] hover:text-[#212121] hover:bg-gray-100 rounded transition-all text-lg font-bold"
-                          >
-                            →
-                          </button>
+                <div className="bg-gradient-to-r from-white to-gray-50 rounded-2xl border border-gray-200 shadow-md mt-8 overflow-hidden">
+                  <div className="relative h-24 md:h-28 flex items-center bg-gradient-to-r from-[#F8F5EF] via-white to-[#F8F5EF] overflow-hidden">
+                    {/* Scrolling container - LEFT TO RIGHT with seamless loop */}
+                    <div className="flex items-center animate-scroll-news-left-right whitespace-nowrap" style={{ transform: 'translateX(-50%)' }}>
+                      {duplicatedEmployees.map((employee, index) => (
+                        <div
+                          key={`${employee.id}-${index}`}
+                          className="flex items-center gap-6 mx-10 flex-shrink-0 px-6 py-3 rounded-xl bg-white/60 backdrop-blur-sm border border-gray-100 shadow-sm"
+                        >
+                          {/* Avatar */}
+                          <div className="flex-shrink-0">
+                            <img 
+                              src={employee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(employee.full_name)}&background=4F46E5&color=fff&size=128`}
+                              alt={employee.full_name}
+                              className="w-14 h-14 md:w-16 md:h-16 rounded-full border-4 border-white shadow-lg"
+                            />
+                          </div>
+                          
+                          {/* Name and Note */}
+                          <div className="flex flex-col gap-1 min-w-0">
+                            <span className="text-xs md:text-sm font-semibold text-[#212121]/60 uppercase tracking-wide">
+                              {employee.full_name}
+                            </span>
+                            <span className="text-base md:text-lg font-bold text-[#212121] leading-tight">
+                              {employee.status_note}
+                            </span>
+                          </div>
+                          
                         </div>
-                      </div>
-                      <p className="text-xl md:text-2xl lg:text-3xl font-bold text-[#212121] leading-relaxed">
-                        "{currentEmployee.status_note}"
-                      </p>
+                      ))}
                     </div>
                   </div>
                 </div>
