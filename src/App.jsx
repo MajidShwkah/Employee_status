@@ -1,233 +1,496 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
-import { Clock, User, Plus, Trash2, Edit2, LogOut, Eye, EyeOff, Settings, Upload, Save, X, MessageSquare, Moon, Sun } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { Clock, User, Plus, Trash2, Edit2, LogOut, Settings, Upload, Save, X, MessageSquare, Moon, Sun, ChevronDown, ChevronUp } from 'lucide-react';
+import { supabase } from './lib/supabase';
+import { useAuth } from './contexts/AuthContext';
 import adhanAudio from './Adan.mp3';
+import './index.css';
+
+// Google Icon component for OAuth button
+const GoogleIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24">
+    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+  </svg>
+);
 
 // ============================================
-// NewsTicker Component - Smooth Infinite Scroll
-// Uses requestAnimationFrame for glitch-free animation
+// Global Announcement Bar Component
+// High-visibility bar for admin notices
 // ============================================
-const NewsTicker = React.memo(({ employees }) => {
-  const contentRef = useRef(null);
-  const animationRef = useRef(null);
-  const positionRef = useRef(null); // null = not initialized
-  const isPausedRef = useRef(false);
-  const contentWidthRef = useRef(0);
-  const lastTimeRef = useRef(0);
-  
-  // Speed: pixels per second (adjust for desired scroll speed)
-  const SCROLL_SPEED = 80;
-  
-  // Memoize filtered employees to prevent unnecessary re-renders
-  const employeesWithNotes = React.useMemo(() => 
-    employees.filter(emp => emp.status_note && emp.status_note.trim() !== ''),
-    [employees]
-  );
-  
-  // Create stable key for detecting actual content changes
-  const contentKey = React.useMemo(() => 
-    employeesWithNotes.map(e => `${e.id}-${e.status_note}`).join('|'),
-    [employeesWithNotes]
-  );
-  
-  // Duplicate the content for seamless looping (memoized)
-  const duplicatedEmployees = React.useMemo(() => 
-    [...employeesWithNotes, ...employeesWithNotes],
-    [employeesWithNotes]
-  );
-  
-  // Single useEffect for measurement and animation
-  useEffect(() => {
-    if (employeesWithNotes.length === 0) return;
-    
-    // Measure content after DOM has rendered
-    const measureAndStart = () => {
-      if (!contentRef.current) return;
-      
-      const children = contentRef.current.children;
-      if (children.length === 0) return;
-      
-      // Measure width of first half (one complete set)
-      let totalWidth = 0;
-      const halfLength = Math.floor(children.length / 2);
-      for (let i = 0; i < halfLength; i++) {
-        const child = children[i];
-        const style = window.getComputedStyle(child);
-        const marginLeft = parseFloat(style.marginLeft) || 0;
-        const marginRight = parseFloat(style.marginRight) || 0;
-        totalWidth += child.offsetWidth + marginLeft + marginRight;
-      }
-      
-      contentWidthRef.current = totalWidth;
-      
-      // Initialize position only if not already set, or if content changed significantly
-      if (positionRef.current === null || Math.abs(positionRef.current) > totalWidth * 2) {
-        positionRef.current = -totalWidth;
-      }
-      
-      // Apply initial transform
-      contentRef.current.style.transform = `translateX(${positionRef.current}px)`;
-    };
-    
-    // Use requestAnimationFrame to ensure DOM is ready
-    requestAnimationFrame(measureAndStart);
-    
-    // Animation loop
-    const animate = (currentTime) => {
-      // Skip if not measured yet
-      if (contentWidthRef.current === 0 || positionRef.current === null) {
-        animationRef.current = requestAnimationFrame(animate);
-        return;
-      }
-      
-      if (!lastTimeRef.current) {
-        lastTimeRef.current = currentTime;
-      }
-      
-      const deltaTime = currentTime - lastTimeRef.current;
-      lastTimeRef.current = currentTime;
-      
-      // Cap deltaTime to prevent huge jumps (e.g., after tab switch)
-      const cappedDelta = Math.min(deltaTime, 50);
-      
-      if (!isPausedRef.current) {
-        // Move LEFT TO RIGHT: increase position
-        positionRef.current += (SCROLL_SPEED * cappedDelta) / 1000;
-        
-        // Seamless loop: reset when one full set has scrolled through
-        if (positionRef.current >= 0) {
-          positionRef.current = -contentWidthRef.current;
-        }
-        
-        // Apply transform
-        if (contentRef.current) {
-          contentRef.current.style.transform = `translateX(${positionRef.current}px)`;
-        }
-      }
-      
-      animationRef.current = requestAnimationFrame(animate);
-    };
-    
-    // Start animation
-    animationRef.current = requestAnimationFrame(animate);
-    
-    // Cleanup
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-      lastTimeRef.current = 0;
-    };
-  }, [contentKey]); // Only re-run when actual content changes
-  
-  // Handle pause on hover
-  const handleMouseEnter = React.useCallback(() => {
-    isPausedRef.current = true;
-  }, []);
-  
-  const handleMouseLeave = React.useCallback(() => {
-    isPausedRef.current = false;
-    lastTimeRef.current = 0; // Reset to prevent jump
-  }, []);
-  
-  // Don't render if no notes
-  if (employeesWithNotes.length === 0) return null;
+const AnnouncementBar = React.memo(({ settings }) => {
+  if (!settings?.is_active || !settings?.announcement_text) return null;
   
   return (
-    <div 
-      className="bg-gradient-to-r from-white to-gray-50 rounded-2xl border border-gray-200 shadow-md mt-8 overflow-hidden"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-    >
-      <div className="relative h-24 md:h-28 flex items-center bg-gradient-to-r from-[#F8F5EF] via-white to-[#F8F5EF] overflow-hidden">
-        {/* Scrolling container - NO CSS transitions, only JS transform */}
-        <div 
-          ref={contentRef}
-          className="flex items-center whitespace-nowrap"
-          style={{ 
-            willChange: 'transform',
-            backfaceVisibility: 'hidden',
-            WebkitBackfaceVisibility: 'hidden'
-          }}
+    <div className="sticky top-0 z-50 bg-gradient-to-r from-red-600 to-red-700 text-white py-3 px-4 text-center shadow-lg relative overflow-hidden">
+      {/* Animated background effect */}
+      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer"></div>
+      
+      <div className="relative flex items-center justify-center gap-3">
+        <span className="animate-pulse text-xl">📢</span>
+        <p 
+          className="text-sm md:text-base font-semibold tracking-wide"
+          style={{ unicodeBidi: 'plaintext', direction: 'auto' }}
         >
-          {duplicatedEmployees.map((employee, index) => (
-            <div
-              key={`ticker-${employee.id}-${index}`}
-              className="flex items-center gap-6 mx-10 flex-shrink-0 px-6 py-3 rounded-xl bg-white/60 backdrop-blur-sm border border-gray-100 shadow-sm"
-            >
-              {/* Avatar */}
-              <div className="flex-shrink-0">
-                <img 
-                  src={employee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(employee.full_name)}&background=4F46E5&color=fff&size=128`}
-                  alt={employee.full_name}
-                  className="w-14 h-14 md:w-16 md:h-16 rounded-full border-4 border-white shadow-lg"
-                  loading="eager"
-                />
-              </div>
-              
-              {/* Name and Note */}
-              <div className="flex flex-col gap-1 min-w-0">
-                <span className="text-xs md:text-sm font-semibold text-[#212121]/60 uppercase tracking-wide">
-                  {employee.full_name}
-                </span>
-                <span className="text-base md:text-lg font-bold text-[#212121] leading-tight">
-                  {employee.status_note}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-        
-        {/* Fade edges for polish */}
-        <div className="absolute left-0 top-0 bottom-0 w-16 bg-gradient-to-r from-[#F8F5EF] to-transparent pointer-events-none z-10" />
-        <div className="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-[#F8F5EF] to-transparent pointer-events-none z-10" />
+          {settings.announcement_text}
+        </p>
+        <span className="animate-pulse text-xl">📢</span>
       </div>
     </div>
   );
 });
 
-// Simple password hashing using Web Crypto API
-const hashPassword = async (password) => {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  return hashHex;
+// ============================================
+// Global Layout Shell - Renders immediately, no flicker
+// ============================================
+const AppShell = ({ children, siteSettings }) => (
+  <div className="min-h-screen bg-[#F8F5EF]">
+    <AnnouncementBar settings={siteSettings} />
+    {children}
+  </div>
+);
+
+// ============================================
+// Content Loading Spinner - Small, inline
+// ============================================
+const ContentSpinner = ({ message = 'Loading...' }) => (
+  <div className="flex flex-col items-center justify-center py-12">
+    <div className="relative">
+      <div className="w-10 h-10 border-4 border-gray-200 rounded-full"></div>
+      <div className="absolute top-0 left-0 w-10 h-10 border-4 border-[#c9a227] border-t-transparent rounded-full animate-spin"></div>
+    </div>
+    <p className="text-gray-500 text-sm mt-3">{message}</p>
+  </div>
+);
+
+// ============================================
+// TV Alert Component - BIG CENTER Breaking News Style
+// Dark glassmorphism with colorful accent border
+// ============================================
+const TVAlert = React.memo(({ alert, onDismiss, isFirst }) => {
+  const [isVisible, setIsVisible] = useState(true);
+  const [isExiting, setIsExiting] = useState(false);
+  
+  useEffect(() => {
+    // Auto dismiss after 6 seconds (faster for TV)
+    const timer = setTimeout(() => {
+      setIsExiting(true);
+      setTimeout(() => {
+        setIsVisible(false);
+        onDismiss(alert.id);
+      }, 400);
+    }, 6000);
+    
+    return () => clearTimeout(timer);
+  }, [alert.id, onDismiss]);
+  
+  if (!isVisible) return null;
+  
+  const statusColors = {
+    free: { border: 'border-emerald-500', bg: 'bg-emerald-500', text: 'text-emerald-400', glow: 'shadow-emerald-500/50' },
+    busy: { border: 'border-red-500', bg: 'bg-red-500', text: 'text-red-400', glow: 'shadow-red-500/50' },
+    important: { border: 'border-orange-500', bg: 'bg-orange-500', text: 'text-orange-400', glow: 'shadow-orange-500/50' },
+    note: { border: 'border-blue-500', bg: 'bg-blue-500', text: 'text-blue-400', glow: 'shadow-blue-500/50' }
+  };
+  
+  const colors = statusColors[alert.type] || statusColors.note;
+  
+  return (
+    <div 
+      className={`transform transition-all duration-400 ease-out ${
+        isExiting ? 'scale-90 opacity-0' : 'scale-100 opacity-100'
+      } ${isFirst ? 'animate-bounce-in' : ''}`}
+      style={{ unicodeBidi: 'plaintext', direction: 'auto' }}
+    >
+      <div className={`relative overflow-hidden rounded-2xl border-2 ${colors.border} bg-[#0d0d1a]/95 backdrop-blur-xl shadow-2xl ${colors.glow}`}
+           style={{ boxShadow: `0 0 60px ${colors.glow.includes('emerald') ? 'rgba(16,185,129,0.3)' : colors.glow.includes('red') ? 'rgba(239,68,68,0.3)' : colors.glow.includes('orange') ? 'rgba(249,115,22,0.3)' : 'rgba(59,130,246,0.3)'}` }}>
+        
+        {/* Top banner */}
+        <div className={`${colors.bg} px-4 py-2 flex items-center justify-between`}>
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 bg-white rounded-full animate-pulse"></span>
+            <span className="text-white font-bold text-sm uppercase tracking-wider">Live Update</span>
+          </div>
+          <span className="text-white/80 text-xs">Just now</span>
+        </div>
+        
+        <div className="relative p-6 flex items-center gap-6">
+          {/* Large Avatar */}
+          <div className="relative flex-shrink-0">
+            <img 
+              src={alert.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(alert.name)}&background=random&size=96`}
+              alt={alert.name}
+              className={`w-24 h-24 rounded-full border-4 ${colors.border} object-cover shadow-xl`}
+            />
+            <div className={`absolute -bottom-2 -right-2 w-8 h-8 rounded-full ${colors.bg} border-4 border-[#0d0d1a] flex items-center justify-center shadow-lg`}>
+              <span className="text-white text-lg font-bold">
+                {alert.type === 'free' ? '✓' : alert.type === 'busy' ? '⏱' : alert.type === 'important' ? '!' : '📝'}
+              </span>
+            </div>
+          </div>
+          
+          {/* Content */}
+          <div className="flex-1 min-w-0" style={{ unicodeBidi: 'plaintext', direction: 'auto' }}>
+            <p className="text-white font-bold text-2xl mb-2" style={{ unicodeBidi: 'plaintext', direction: 'auto' }}>
+              {alert.name}
+            </p>
+            <p className={`text-xl ${colors.text} font-semibold`} style={{ unicodeBidi: 'plaintext', direction: 'auto' }}>
+              {alert.message}
+            </p>
+          </div>
+          
+          {/* Close button */}
+          <button 
+            onClick={() => {
+              setIsExiting(true);
+              setTimeout(() => onDismiss(alert.id), 400);
+            }}
+            className="absolute top-3 right-3 p-2 text-white/40 hover:text-white/80 hover:bg-white/10 rounded-full transition-all"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        
+        {/* Progress bar */}
+        <div className="h-1.5 bg-white/10">
+          <div 
+            className={`h-full ${colors.bg} animate-shrink`}
+            style={{ animationDuration: '6s' }}
+          ></div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// ============================================
+// TV Alerts Container - CENTER of screen, stacks multiple alerts
+// ============================================
+const TVAlertsContainer = React.memo(({ alerts, onDismiss }) => {
+  if (alerts.length === 0) return null;
+  
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+      <div className="flex flex-col gap-4 max-w-2xl w-full px-4 pointer-events-auto">
+        {alerts.slice(0, 3).map((alert, index) => (
+          <TVAlert 
+            key={alert.id} 
+            alert={alert} 
+            onDismiss={onDismiss}
+            isFirst={index === 0}
+          />
+        ))}
+        {alerts.length > 3 && (
+          <div className="text-center text-white/60 text-sm bg-black/50 rounded-full px-4 py-2 backdrop-blur-sm">
+            +{alerts.length - 3} more updates
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+// ============================================
+// NewsTicker Component - Clean, Note-Focused Broadcast Ticker
+// Matches website color scheme, name above note (transparent)
+// Now with "NEW" badge for recently updated notes
+// ============================================
+const NewsTicker = React.memo(({ employees, recentlyUpdated = {} }) => {
+  const employeesWithNotes = React.useMemo(() => 
+    employees.filter(emp => emp.status_note && emp.status_note.trim() !== ''),
+    [employees]
+  );
+  
+  if (employeesWithNotes.length === 0) {
+    return (
+      <div 
+        className="w-full overflow-hidden border-b border-[#212121]/10"
+        style={{ 
+          background: 'rgba(255, 255, 255, 0.85)',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)'
+        }}
+      >
+        <div className="py-4 px-6 text-center">
+          <span className="text-[#212121]/40 text-base italic">
+            No notes to display. Employees can add notes from their Control Panel.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  // Note item - Avatar + Name/Note stacked with optional NEW badge
+  // ═══════════════════════════════════════════════════════════════
+  // 📐 SIZE SETTINGS - Change these values to adjust news bar items:
+  //    - Avatar: w-14 h-14 (56px) - Change to w-16 h-16 for bigger
+  //    - Name: text-sm - Change to text-base for bigger
+  //    - Note: text-xl - Change to text-2xl for bigger
+  // ═══════════════════════════════════════════════════════════════
+  const NoteItem = ({ emp }) => {
+    const isNew = recentlyUpdated[emp.id];
+    
+    return (
+      <div 
+        className={`flex items-center gap-4 flex-shrink-0 px-6 relative ${isNew ? 'animate-pulse-subtle' : ''}`}
+        style={{ unicodeBidi: 'plaintext', direction: 'auto' }}
+      >
+        {/* NEW badge */}
+        {isNew && (
+          <div className="absolute -top-1 -left-1 z-10">
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-500 text-white animate-bounce shadow-lg">
+              NEW
+            </span>
+          </div>
+        )}
+        
+        {/* Avatar - w-14 h-14 = 56px */}
+        <div className={`relative ${isNew ? 'ring-2 ring-red-400 ring-offset-2 ring-offset-white/80 rounded-full' : ''}`}>
+          <img 
+            src={emp.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(emp.full_name)}&background=e5e5e5&color=212121&size=56`}
+            alt={emp.full_name}
+            className="w-14 h-14 rounded-full border-2 border-[#212121]/10 object-cover flex-shrink-0"
+          />
+        </div>
+        <div className="flex flex-col">
+          {/* Name - text-sm */}
+          <span className="text-[#212121]/50 text-sm font-medium uppercase tracking-wider">
+            {emp.full_name}
+          </span>
+          {/* Note text - text-xl (larger) */}
+          <span 
+            className={`text-[#212121] font-bold text-xl ${isNew ? 'text-red-600' : ''}`}
+            style={{ unicodeBidi: 'plaintext', direction: 'auto' }}
+          >
+            {emp.status_note}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  // Separator between notes
+  const Separator = () => (
+    <span className="text-[#212121]/20 text-2xl mx-4 flex-shrink-0">•</span>
+  );
+  
+  return (
+    <div 
+      className="mt-4 overflow-hidden rounded-xl relative ticker-container"
+      style={{
+        background: 'rgba(255, 255, 255, 0.7)',
+        backdropFilter: 'blur(10px)',
+        WebkitBackdropFilter: 'blur(10px)',
+        border: '1px solid rgba(33, 33, 33, 0.1)',
+        boxShadow: '0 2px 12px rgba(0, 0, 0, 0.05)',
+      }}
+    >
+      {/* Gradient edges */}
+      <div 
+        className="absolute left-0 top-0 bottom-0 w-16 z-10 pointer-events-none"
+        style={{ background: 'linear-gradient(to right, rgba(255,255,255,0.9) 0%, transparent 100%)' }}
+      />
+      <div 
+        className="absolute right-0 top-0 bottom-0 w-16 z-10 pointer-events-none"
+        style={{ background: 'linear-gradient(to left, rgba(255,255,255,0.9) 0%, transparent 100%)' }}
+      />
+      
+      {/* Marquee track - Dual-list for seamless loop */}
+      {/* 📐 PADDING: py-4 = vertical padding. Change to py-5 or py-6 for taller bar */}
+      <div className="py-4">
+        <div className="ticker-track flex items-center">
+          {/* First copy */}
+          <div className="ticker-content flex items-center">
+            {employeesWithNotes.map((emp, index) => (
+              <React.Fragment key={`first-${emp.id}`}>
+                <NoteItem emp={emp} />
+                {index < employeesWithNotes.length - 1 && <Separator />}
+              </React.Fragment>
+            ))}
+            <Separator />
+          </div>
+          
+          {/* Second copy */}
+          <div className="ticker-content flex items-center">
+            {employeesWithNotes.map((emp, index) => (
+              <React.Fragment key={`second-${emp.id}`}>
+                <NoteItem emp={emp} />
+                {index < employeesWithNotes.length - 1 && <Separator />}
+              </React.Fragment>
+            ))}
+            <Separator />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// ============================================
+// Notification Component - Colors match status
+// ============================================
+const Notification = ({ notification, onClose }) => {
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(onClose, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification, onClose]);
+  
+  if (!notification) return null;
+  
+  // Colors match status colors
+  const colors = {
+    free: 'bg-[#166534] border-[#15803d]',
+    busy: 'bg-[#991b1b] border-[#b91c1c]',
+    important: 'bg-[#ea580c] border-[#f97316]',
+    success: 'bg-[#166534] border-[#15803d]',
+    error: 'bg-[#991b1b] border-[#b91c1c]',
+    info: 'bg-blue-500 border-blue-400'
+  };
+  
+  return (
+    <div className={`fixed top-4 right-4 z-50 px-6 py-3 rounded-xl text-white shadow-lg border-2 ${colors[notification.type] || colors.info} animate-slide-in`}>
+      {notification.message}
+    </div>
+  );
 };
 
-const verifyPassword = async (password, hash) => {
-  const passwordHash = await hashPassword(password);
-  return passwordHash === hash;
-};
+// ============================================
+// Employee Card Component - Horizontal layout with decorative corner
+// ============================================
+const EmployeeCard = React.memo(({ employee, onStatusExpired }) => {
+  const [countdown, setCountdown] = useState('');
+  
+  const statusColors = {
+    free: 'from-[#166534] to-[#15803d]',
+    busy: 'from-[#991b1b] to-[#b91c1c]',
+    important: 'from-[#ea580c] to-[#f97316]'
+  };
+  
+  const statusConfig = {
+    free: { text: 'Available', icon: '✓', color: 'bg-green-500' },
+    busy: { text: 'Busy', icon: '✕', color: 'bg-red-500' },
+    important: { text: 'Important', icon: '!', color: 'bg-orange-500' }
+  };
 
-// Initialize Supabase client
-// TODO: Replace these with your actual Supabase credentials
-const SUPABASE_URL = 'https://dmmmwudmypwcchkxchlg.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbW13dWRteXB3Y2Noa3hjaGxnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg0NzgxMjgsImV4cCI6MjA4NDA1NDEyOH0.p-YhlQ9Tj4YrEIIcuY_uWWwIsHBAlBZQqp3KlFLt4fc';
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const status = statusConfig[employee.status] || statusConfig.free;
 
-// Session duration: 15 minutes
-const SESSION_DURATION = 15 * 60 * 1000;
+  // Countdown timer for busy status
+  useEffect(() => {
+    if (employee.status !== 'busy' || !employee.busy_until) {
+      setCountdown('');
+      return;
+    }
 
-// Maximum busy duration: 24 hours (1440 minutes)
-const MAX_BUSY_DURATION_MINUTES = 24 * 60; // 1440 minutes
+    const updateCountdown = () => {
+      const now = new Date();
+      const busyUntil = new Date(employee.busy_until);
+      const diff = busyUntil - now;
+      
+      if (diff <= 0) {
+        setCountdown('');
+        if (onStatusExpired) {
+          onStatusExpired(employee.id);
+        }
+        return;
+      }
+      
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+      
+      if (hours > 0) {
+        setCountdown(`${hours}h ${minutes}m`);
+      } else if (minutes > 0) {
+        setCountdown(`${minutes}m ${seconds}s`);
+      } else {
+        setCountdown(`${seconds}s`);
+      }
+    };
 
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [employee.status, employee.busy_until, employee.id, onStatusExpired]);
+
+  return (
+    <div className={`relative bg-gradient-to-br ${statusColors[employee.status] || statusColors.free} rounded-2xl p-4 shadow-lg border-2 border-white/20 overflow-hidden`}>
+      {/* Decorative half circle in top right corner */}
+      <div className="absolute -top-6 -right-6 w-16 h-16 bg-white/15 rounded-full"></div>
+      <div className="absolute -top-3 -right-3 w-10 h-10 bg-white/10 rounded-full"></div>
+      
+      {/* Horizontal layout */}
+      <div className="flex items-center gap-4 relative z-10">
+        {/* Avatar on left */}
+        <div className="relative flex-shrink-0">
+          <div className="w-14 h-14 rounded-full bg-white/20 p-0.5 shadow-lg">
+            <img 
+              src={employee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(employee.full_name)}&background=random&size=56`}
+              alt={employee.full_name}
+              className="w-full h-full rounded-full object-cover border-2 border-white/60"
+            />
+          </div>
+          {/* Status indicator dot on avatar */}
+          <div className={`absolute -bottom-0.5 -right-0.5 w-5 h-5 ${status.color} rounded-full border-2 border-white flex items-center justify-center`}>
+            <span className="text-white text-[10px] font-bold">{status.icon}</span>
+          </div>
+        </div>
+        
+        {/* Name and Status on right */}
+        <div className="flex-1 min-w-0">
+          <h3 className="font-bold text-white text-lg truncate">{employee.full_name}</h3>
+          <div className="flex items-center gap-2 mt-1.5">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 border border-white/30 backdrop-blur-sm text-white text-sm font-medium shadow-sm">
+              {status.text}
+              {countdown && <span className="font-mono text-white/80">• {countdown}</span>}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// ============================================
+// Maximum busy duration: 24 hours
+// ============================================
+const MAX_BUSY_DURATION_MINUTES = 24 * 60;
+
+// ============================================
+// Main App Component
+// ============================================
 const App = () => {
-  const [view, setView] = useState('public'); // public, employee, admin
-  const [employees, setEmployees] = useState([]);
-  const [currentUser, setCurrentUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [showPassword, setShowPassword] = useState(false);
-  const [sessionTimeLeft, setSessionTimeLeft] = useState(null);
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { 
+    profile: currentUser,
+    session,
+    isAuthenticated, 
+    isAdmin, 
+    loading: authLoading,
+    profileLoading,
+    signingIn,
+    initialized,
+    authError, 
+    signInWithGoogle, 
+    signOut: handleLogout,
+    updateProfile,
+    setAuthError
+  } = useAuth();
 
-  // Login state
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  // App state
+  const [employees, setEmployees] = useState([]);
+  const [dataLoading, setDataLoading] = useState(true);
+  
+  // Site Settings (Global Announcement)
+  const [siteSettings, setSiteSettings] = useState(null);
+  const siteSettingsChannelRef = useRef(null);
 
   // Employee control state
-  const [noteText, setNoteText] = useState(''); // Separate note state (independent of status)
+  const [noteText, setNoteText] = useState('');
   const [busyDuration, setBusyDuration] = useState(30);
   const [customDuration, setCustomDuration] = useState('');
   const [useCustomDuration, setUseCustomDuration] = useState(false);
@@ -236,33 +499,90 @@ const App = () => {
   const realtimeChannelRef = useRef(null);
   const isMountedRef = useRef(true);
   const pollingIntervalRef = useRef(null);
-  const healthCheckIntervalRef = useRef(null);
+  
+  // TV Dashboard Real-time Alert States
+  const [tvAlerts, setTvAlerts] = useState([]);
+  
+  // Recently updated - persisted to localStorage so it survives refresh
+  const [recentlyUpdated, setRecentlyUpdated] = useState(() => {
+    try {
+      const saved = localStorage.getItem('recentlyUpdatedNotes');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Filter out expired entries (older than 10 minutes)
+        const TEN_MINUTES = 10 * 60 * 1000;
+        const now = Date.now();
+        const filtered = {};
+        Object.keys(parsed).forEach(id => {
+          if (now - parsed[id] < TEN_MINUTES) {
+            filtered[id] = parsed[id];
+          }
+        });
+        return filtered;
+      }
+    } catch (e) {
+      console.error('Error loading recentlyUpdated from localStorage:', e);
+    }
+    return {};
+  });
+  
+  // Ref to hold current employees for realtime callbacks
+  const employeesRef = useRef([]);
+  
+  // Dismiss TV alert
+  const dismissTvAlert = useCallback((alertId) => {
+    setTvAlerts(prev => prev.filter(a => a.id !== alertId));
+  }, []);
+  
+  // Keep employeesRef in sync with employees state
+  useEffect(() => {
+    employeesRef.current = employees;
+  }, [employees]);
+  
+  // Persist recentlyUpdated to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('recentlyUpdatedNotes', JSON.stringify(recentlyUpdated));
+    } catch (e) {
+      console.error('Error saving recentlyUpdated to localStorage:', e);
+    }
+  }, [recentlyUpdated]);
+  
+  // Cleanup recently updated entries after 10 minutes
+  useEffect(() => {
+    const TEN_MINUTES = 3 * 60 * 1000;
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setRecentlyUpdated(prev => {
+        const updated = { ...prev };
+        let changed = false;
+        Object.keys(updated).forEach(id => {
+          if (now - updated[id] > TEN_MINUTES) {
+            delete updated[id];
+            changed = true;
+          }
+        });
+        return changed ? updated : prev;
+      });
+    }, 30000); // Check every 30 seconds
+    
+    return () => clearInterval(interval);
+  }, []);
 
   // Profile editing state
   const [showProfileSettings, setShowProfileSettings] = useState(false);
   const [editingName, setEditingName] = useState('');
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [avatarFile, setAvatarFile] = useState(null);
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
 
   // Admin state
-  const [showAddModal, setShowAddModal] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState(null);
-  const [newEmployee, setNewEmployee] = useState({
-    username: '',
-    full_name: '',
-    password: '',
-    role: 'employee'
-  });
+  const [isAnnouncementOpen, setIsAnnouncementOpen] = useState(false);
 
   // Notification state
   const [notification, setNotification] = useState(null);
-  
-  // Note: Removed currentNoteIndex - now using continuous scrolling news bar
 
   // Prayer times state
   const [prayerTimes, setPrayerTimes] = useState(null);
@@ -273,2379 +593,1025 @@ const App = () => {
   const [currentTime, setCurrentTime] = useState('');
   const adhanAudioRef = useRef(null);
 
-  // Initialize and setup realtime subscription
+  // Show notification helper
+  const showNotification = useCallback((message, type = 'info') => {
+    setNotification({ message, type });
+  }, []);
+
+  // Clear notification on route change
   useEffect(() => {
-    console.log('🚀 Setting up realtime subscription and polling...');
-    
-    // Only check user on mount, not on every render
-    const initApp = async () => {
-      await checkUser();
-      await fetchEmployees();
-      await fetchPrayerTimes();
-      setIsInitialLoad(false);
-    };
-    initApp();
-    
-    // Refresh prayer times daily at midnight
-    const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
-    const msUntilMidnight = tomorrow.getTime() - now.getTime();
-    
-    const prayerTimesRefresh = setTimeout(() => {
-      fetchPrayerTimes();
-      // Then refresh every 24 hours
-      setInterval(fetchPrayerTimes, 24 * 60 * 60 * 1000);
-    }, msUntilMidnight);
-    
-    // Periodically refresh session to keep user logged in
-    // This ensures session persists across page navigations
-    const sessionRefreshInterval = setInterval(() => {
-      const savedUserId = localStorage.getItem('currentUserId');
-      const sessionExpiry = localStorage.getItem('sessionExpiry');
-      
-      if (savedUserId && sessionExpiry) {
-        const expiryTime = parseInt(sessionExpiry);
-        const timeUntilExpiry = expiryTime - Date.now();
-        
-        // If session is still valid, refresh it
-        if (timeUntilExpiry > 0 && timeUntilExpiry < SESSION_DURATION) {
-          localStorage.setItem('sessionExpiry', (Date.now() + SESSION_DURATION).toString());
-        }
-      }
-    }, 60000); // Check every minute
+    setNotification(null);
+  }, [location.pathname]);
 
-    // Setup realtime subscription with proper status monitoring
-    let reconnectAttempts = 0;
-    const maxReconnectAttempts = 5;
-    
-    const setupRealtimeSubscription = () => {
-      console.log('🔧 Setting up realtime subscription...');
-      // Remove existing channel if any
-      if (realtimeChannelRef.current) {
-        try {
-          supabase.removeChannel(realtimeChannelRef.current);
-          console.log('🗑️ Removed old channel');
-        } catch (e) {
-          console.warn('Error removing old channel:', e);
-        }
-        realtimeChannelRef.current = null;
-      }
-      
-      const channelName = `profiles-realtime-${Date.now()}`;
-      console.log('📡 Creating channel:', channelName);
-      const channel = supabase
-        .channel(channelName, {
-          config: {
-            broadcast: { self: true },
-          }
-        })
-        .on('postgres_changes', 
-          { 
-            event: '*', 
-            schema: 'public', 
-            table: 'profiles' 
-          }, 
-          (payload) => {
-            console.log('🔔 Realtime update received:', payload);
-            reconnectAttempts = 0; // Reset on successful update
-            
-            if (payload.eventType === 'INSERT') {
-              console.log('➕ New employee added:', payload.new);
-              setEmployees(prev => {
-                // Check if already exists (avoid duplicates)
-                if (prev.find(emp => emp.id === payload.new.id)) {
-                  return prev;
-                }
-                return [...prev, payload.new];
-              });
-            } else if (payload.eventType === 'UPDATE') {
-              console.log('🔄 Employee updated:', payload.new?.full_name || payload.new?.id, 'Status:', payload.new?.status);
-              
-              // Find the previous state to detect changes
-              setEmployees(prev => {
-                const oldEmp = prev.find(emp => emp.id === payload.new.id);
-                
-                // Check if status changed
-                if (oldEmp && oldEmp.status !== payload.new.status) {
-                  const statusConfig = {
-                    'free': { emoji: '✅', label: 'Available' },
-                    'busy': { emoji: '🔴', label: 'Busy' },
-                    'important': { emoji: '⚠️', label: 'Important Only' }
-                  };
-                  const config = statusConfig[payload.new.status] || { emoji: '🔄', label: payload.new.status };
-                  
-                  // Special message for Important status
-                  let message = `${payload.new.full_name} is now ${config.label}`;
-                  if (payload.new.status === 'important') {
-                    message = `${payload.new.full_name} is available when something important only`;
-                  }
-                  
-                  setNotification({
-                    type: 'status',
-                    message: message,
-                    emoji: config.emoji,
-                    name: payload.new.full_name,
-                    status: payload.new.status
-                  });
-                }
-                
-                // Check if status note changed (including when it's cleared)
-                if (oldEmp && oldEmp.status_note !== payload.new.status_note) {
-                  if (payload.new.status_note) {
-                    setNotification({
-                      type: 'note',
-                      message: `${payload.new.full_name} says: "${payload.new.status_note}"`,
-                      emoji: '💬',
-                      name: payload.new.full_name,
-                      note: payload.new.status_note
-                    });
-                  }
-                }
-                
-                const updated = prev.map(emp => {
-                  if (emp.id === payload.new.id) {
-                    // Preserve avatar_url if it's missing in the update
-                    const preservedAvatar = (payload.new.avatar_url && payload.new.avatar_url.trim() !== '') 
-                      ? payload.new.avatar_url 
-                      : emp.avatar_url;
-                    const updatedEmp = { ...payload.new, avatar_url: preservedAvatar };
-                    console.log('✅ Updated employee in list:', updatedEmp.full_name, '→ Status:', updatedEmp.status);
-                    return updatedEmp;
-                  }
-                  return emp;
-                });
-                return updated;
-              });
-              
-              // If the update is for the current user, also update currentUser state
-              setCurrentUser(prev => {
-                if (prev && payload.new.id === prev.id) {
-                  const preservedAvatar = (payload.new.avatar_url && payload.new.avatar_url.trim() !== '') 
-                    ? payload.new.avatar_url 
-                    : prev.avatar_url;
-                  
-                  const updatedUser = { 
-                    ...prev, 
-                    ...payload.new,
-                    avatar_url: preservedAvatar
-                  };
-                  console.log('✅ Updated current user:', updatedUser.full_name, '→ Status:', updatedUser.status);
-                  return updatedUser;
-                }
-                return prev;
-              });
-            } else if (payload.eventType === 'DELETE') {
-              console.log('➖ Employee deleted:', payload.old);
-              setEmployees(prev => prev.filter(emp => emp.id !== payload.old.id));
-              
-              // If current user was deleted, log them out
-              setCurrentUser(prev => {
-                if (prev && payload.old.id === prev.id) {
-                  localStorage.removeItem('currentUserId');
-                  localStorage.removeItem('sessionExpiry');
-                  return null;
-                }
-                return prev;
-              });
-            }
-          }
-        );
-      
-      // Store channel reference BEFORE subscribing
-      realtimeChannelRef.current = channel;
-      
-      // Subscribe and handle status
-      channel.subscribe((status, err) => {
-        console.log('📡 Realtime subscription status:', status, err ? `Error: ${err}` : '');
-        if (status === 'SUBSCRIBED') {
-          console.log('✅ Realtime subscription ACTIVE - listening for changes');
-          reconnectAttempts = 0; // Reset on successful subscription
-        } else if (status === 'CHANNEL_ERROR') {
-          console.error('❌ Realtime subscription ERROR:', err);
-          reconnectAttempts++;
-          if (reconnectAttempts < maxReconnectAttempts) {
-            setTimeout(() => {
-              console.log(`🔄 Attempting to resubscribe (attempt ${reconnectAttempts + 1}/${maxReconnectAttempts})...`);
-              setupRealtimeSubscription();
-            }, 3000);
-          } else {
-            console.error('❌ Max reconnection attempts reached. Using polling fallback.');
-          }
-        } else if (status === 'TIMED_OUT') {
-          console.warn('⚠️ Realtime subscription TIMED OUT - retrying...');
-          reconnectAttempts++;
-          if (reconnectAttempts < maxReconnectAttempts) {
-            setTimeout(() => {
-              console.log(`🔄 Attempting to resubscribe after timeout (attempt ${reconnectAttempts + 1}/${maxReconnectAttempts})...`);
-              setupRealtimeSubscription();
-            }, 2000);
-          }
-        } else if (status === 'CLOSED') {
-          console.warn('⚠️ Realtime subscription CLOSED - resubscribing...');
-          reconnectAttempts++;
-          if (reconnectAttempts < maxReconnectAttempts) {
-            setTimeout(() => {
-              console.log(`🔄 Attempting to resubscribe after close (attempt ${reconnectAttempts + 1}/${maxReconnectAttempts})...`);
-              setupRealtimeSubscription();
-            }, 2000);
-          }
-        }
-      });
-      
-      return channel;
-    };
-    
-    // Initial subscription setup
-    console.log('🔧 Initializing realtime subscription...');
-    setupRealtimeSubscription();
-    
-    // Polling fallback - ensures updates are always visible (every 3 seconds)
-    // This is the reliable backup that always works even if realtime fails
-    pollingIntervalRef.current = setInterval(() => {
-      if (isMountedRef.current) {
-        fetchEmployees();
-      }
-    }, 3000);
-    
-    // Health check for realtime subscription
-    healthCheckIntervalRef.current = setInterval(() => {
-      if (!isMountedRef.current) return;
-      
-      if (realtimeChannelRef.current) {
-        const channelState = realtimeChannelRef.current.state;
-        if (channelState !== 'joined' && channelState !== 'joining' && reconnectAttempts < maxReconnectAttempts) {
-          setupRealtimeSubscription();
-        }
-      } else if (reconnectAttempts < maxReconnectAttempts) {
-        setupRealtimeSubscription();
-      }
-    }, 15000);
-
-    return () => {
-      isMountedRef.current = false;
-      
-      clearTimeout(prayerTimesRefresh);
-      clearInterval(sessionRefreshInterval);
-      
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
-      }
-      
-      if (healthCheckIntervalRef.current) {
-        clearInterval(healthCheckIntervalRef.current);
-        healthCheckIntervalRef.current = null;
-      }
-      
-      if (realtimeChannelRef.current) {
-        try {
-          const channel = realtimeChannelRef.current;
-          realtimeChannelRef.current = null;
-          supabase.removeChannel(channel);
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      }
-    };
-  }, []); // Empty dependency - subscription is set up once on mount
-
-  // Auto-dismiss notifications after 5 seconds
-  useEffect(() => {
-    if (notification) {
-      const timer = setTimeout(() => {
-        setNotification(null);
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [notification]);
-
-  // Note: Removed auto-cycle logic - now using continuous scrolling news bar
-
-  // Auto-update status to 'free' when busy timer expires
-  // Only applies to employees who set a timer (have busy_until set)
-  useEffect(() => {
-    const checkExpiredTimers = async () => {
-      const now = Date.now();
-      
-      // Check all employees with busy status and busy_until set
-      // Only auto-update if they have a timer (busy_until is set)
-      const expiredEmployees = employees.filter(emp => {
-        if (emp.status !== 'busy' || !emp.busy_until) return false;
-        const busyUntil = new Date(emp.busy_until).getTime();
-        return busyUntil <= now;
-      });
-
-      // Auto-update expired timers to 'free'
-      for (const emp of expiredEmployees) {
-        console.log(`⏰ Timer expired for ${emp.full_name}, auto-setting to free`);
-        
-        // Update via Supabase - this will trigger realtime updates for all clients
-        const { error } = await supabase
-          .from('profiles')
-          .update({
-            status: 'free',
-            status_note: null,
-            busy_until: null,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', emp.id);
-        
-        if (error) {
-          console.error(`Error auto-updating ${emp.full_name} to free:`, error);
-        } else {
-          console.log(`✅ Auto-updated ${emp.full_name} to free`);
-        }
-      }
-    };
-
-    // Check every 10 seconds for expired timers
-    const interval = setInterval(checkExpiredTimers, 10000);
-    
-    // Also check immediately
-    checkExpiredTimers();
-    
-    return () => clearInterval(interval);
-  }, [employees]); // Re-run when employees list changes
-
-  // Check if user is logged in (from localStorage) with session expiration
-  const checkUser = async () => {
-    const savedUserId = localStorage.getItem('currentUserId');
-    const sessionExpiry = localStorage.getItem('sessionExpiry');
-    
-    // Check if session expired
-    if (sessionExpiry && Date.now() > parseInt(sessionExpiry)) {
-      // Session expired
-      localStorage.removeItem('currentUserId');
-      localStorage.removeItem('sessionExpiry');
-      setCurrentUser(null);
-      setView('public');
-      setLoading(false);
-      return;
-    }
-    
-    if (savedUserId) {
-      const { data: profile, error } = await supabase
-        .from('profiles')
+  // ============================================
+  // Data Fetching (must be before handleStatusExpired)
+  // ============================================
+  
+  // Fetch Site Settings (Global Announcement)
+  const fetchSiteSettings = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('site_settings')
         .select('*')
-        .eq('id', savedUserId)
+        .eq('id', 'global_config')
         .single();
       
-      // SECURITY: Verify we got the correct profile
-      if (error) {
-        console.error('Error loading profile:', error);
-        localStorage.removeItem('currentUserId');
-        localStorage.removeItem('sessionExpiry');
-        setCurrentUser(null);
-        setView('public');
-        setLoading(false);
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error fetching site settings:', error);
         return;
       }
       
-      if (profile && profile.id === savedUserId) {
-        // CRITICAL: Always preserve avatar_url when setting currentUser
-        // If profile has avatar_url, use it; otherwise keep existing if available
-        const preservedAvatar = (profile.avatar_url && profile.avatar_url.trim() !== '') 
-          ? profile.avatar_url 
-          : (currentUser?.avatar_url || profile.avatar_url);
-        
-        setCurrentUser({ ...profile, avatar_url: preservedAvatar });
-        
-        // Refresh session expiry - this extends the session on every check
-        localStorage.setItem('sessionExpiry', (Date.now() + SESSION_DURATION).toString());
-        
-        // CRITICAL: Only auto-set view on initial page load (when isInitialLoad is true)
-        // After initial load, NEVER change the view - preserve whatever view the user is on
-        // This ensures users stay logged in when navigating between views
-        if (isInitialLoad) {
-          // First load or page refresh - set appropriate view based on role
-          if (profile.role === 'admin') {
-            setView('admin');
-          } else if (profile.role === 'employee') {
-            setView('employee');
-          }
-        }
-        // After initial load, DO NOT change view - keep current view
-        // This allows logged-in users to navigate freely between public dashboard, control panel, and admin panel
-        // User stays logged in for 15 minutes regardless of which view they're on
+      if (data) {
+        console.log('📢 Site settings loaded:', data.is_active ? 'Active' : 'Inactive');
+        setSiteSettings(data);
       } else {
-        // User not found, clear session
-        localStorage.removeItem('currentUserId');
-        localStorage.removeItem('sessionExpiry');
-        setCurrentUser(null);
-        if (view !== 'public' && view !== 'login') {
-          setView('public');
+        // Create default settings if not exists
+        const defaultSettings = {
+          id: 'global_config',
+          announcement_text: '⚠️ Security Upgrade: Please login using your @getrime.com Google account only. Old notes have been migrated.',
+          is_active: true,
+          updated_at: new Date().toISOString()
+        };
+        const { error: insertError } = await supabase
+          .from('site_settings')
+          .insert(defaultSettings);
+        
+        if (!insertError) {
+          setSiteSettings(defaultSettings);
         }
       }
-    } else {
-      // No saved user - ensure we're on public view
-      setCurrentUser(null);
-      if (view !== 'public' && view !== 'login') {
-        setView('public');
-      }
+    } catch (err) {
+      console.error('Exception fetching site settings:', err);
     }
-    setLoading(false);
-  };
-
-  // Sync fields when currentUser changes
-  useEffect(() => {
-    if (currentUser) {
-      // Sync note from current user (independent of status)
-      const currentNote = currentUser.status_note || '';
-      if (currentNote !== noteText) {
-        setNoteText(currentNote);
-      }
+  }, []);
+  
+  const fetchEmployees = useCallback(async () => {
+    try {
+      const { data, error, status, statusText } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .order('full_name');
       
-      // Calculate and sync busy duration if user is busy (not for important)
-      if (currentUser.status === 'busy' && currentUser.busy_until) {
-        const busyUntil = new Date(currentUser.busy_until).getTime();
-        const now = Date.now();
-        const remainingMinutes = Math.ceil((busyUntil - now) / 60000);
-        if (remainingMinutes > 0) {
-          // Set to closest preset or custom
-          if ([15, 30, 60, 120].includes(remainingMinutes)) {
-            setBusyDuration(remainingMinutes);
-            setUseCustomDuration(false);
-          } else {
-            setCustomDuration(remainingMinutes.toString());
-            setUseCustomDuration(true);
-          }
-        }
-      }
-    }
-  }, [currentUser]);
-
-  // Auto-logout timer and session countdown
-  useEffect(() => {
-    if (!currentUser) {
-      setSessionTimeLeft(null);
-      return;
-    }
-
-    const updateSessionTimer = () => {
-      const sessionExpiry = localStorage.getItem('sessionExpiry');
-      if (!sessionExpiry) return;
-
-      const expiryTime = parseInt(sessionExpiry);
-      const timeUntilExpiry = expiryTime - Date.now();
-
-      if (timeUntilExpiry <= 0) {
-        alert('Your session has expired. Please login again.');
-        handleLogout();
+      if (error) {
+        console.error('❌ Error fetching employees:', error);
+        console.error('   Status:', status, statusText);
         return;
       }
-
-      // Update session time left display
-      const minutes = Math.floor(timeUntilExpiry / 60000);
-      const seconds = Math.floor((timeUntilExpiry % 60000) / 1000);
-      setSessionTimeLeft(`${minutes}:${seconds.toString().padStart(2, '0')}`);
-
-      // Warn when 2 minutes left
-      if (timeUntilExpiry < 2 * 60 * 1000 && timeUntilExpiry > 1 * 60 * 1000) {
-        // Only show once
-        if (!localStorage.getItem('sessionWarningShown')) {
-          alert('Your session will expire in 2 minutes. Activity will extend your session.');
-          localStorage.setItem('sessionWarningShown', 'true');
-        }
-      }
-    };
-
-    // Update immediately
-    updateSessionTimer();
-
-    // Update every second
-    const interval = setInterval(updateSessionTimer, 1000);
-
-    // Set timer for auto-logout
-    const sessionExpiry = localStorage.getItem('sessionExpiry');
-    if (sessionExpiry) {
-      const expiryTime = parseInt(sessionExpiry);
-      const timeUntilExpiry = expiryTime - Date.now();
       
-      if (timeUntilExpiry > 0) {
-        const timer = setTimeout(() => {
-          alert('Your session has expired. Please login again.');
-          handleLogout();
-        }, timeUntilExpiry);
-
-        // Refresh session on user activity
-        const refreshSession = () => {
-          localStorage.setItem('sessionExpiry', (Date.now() + SESSION_DURATION).toString());
-          localStorage.removeItem('sessionWarningShown'); // Reset warning
-        };
-
-        // Listen for user activity
-        const events = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
-        events.forEach(event => {
-          window.addEventListener(event, refreshSession, { passive: true });
+      if (!isMountedRef.current) return;
+      
+      const newData = data || [];
+      const oldData = employeesRef.current;
+      
+      // Detect changes and trigger TV alerts (for polling-based updates)
+      if (oldData.length > 0 && newData.length > 0) {
+        newData.forEach(newEmp => {
+          const oldEmp = oldData.find(e => e.id === newEmp.id);
+          if (oldEmp) {
+            // Status changed
+            if (oldEmp.status !== newEmp.status) {
+              console.log('🔔 POLLING: Status change detected for', newEmp.full_name);
+              
+              // Calculate busy duration message
+              let statusMessage = 'updated their status';
+              if (newEmp.status === 'free') {
+                statusMessage = 'is now Available ✓';
+              } else if (newEmp.status === 'important') {
+                statusMessage = 'Can be reached for important matters only ⚠️';
+              } else if (newEmp.status === 'busy') {
+                if (newEmp.busy_until) {
+                  const busyUntil = new Date(newEmp.busy_until);
+                  const now = new Date();
+                  const diffMs = busyUntil - now;
+                  const diffMins = Math.round(diffMs / 60000);
+                  if (diffMins > 0) {
+                    if (diffMins >= 60) {
+                      const hours = Math.floor(diffMins / 60);
+                      const mins = diffMins % 60;
+                      statusMessage = `Will be busy for ${hours}h ${mins}m ⏱`;
+                    } else {
+                      statusMessage = `Will be busy for ${diffMins} minutes ⏱`;
+                    }
+                  } else {
+                    statusMessage = 'is now Busy ⏱';
+                  }
+                } else {
+                  statusMessage = 'is now Busy ⏱';
+                }
+              }
+              
+              setTvAlerts(prev => {
+                // Allow multiple status changes - only block exact same status within 3 seconds
+                const alertId = `${newEmp.id}-status-${newEmp.status}-${Date.now()}`;
+                const recentSameStatus = prev.find(a => 
+                  a.id.includes(`${newEmp.id}-status-${newEmp.status}`) && 
+                  (Date.now() - parseInt(a.id.split('-').pop())) < 3000
+                );
+                if (recentSameStatus) return prev; // Only block if same exact status within 3 sec
+                return [...prev, {
+                  id: alertId,
+                  type: newEmp.status,
+                  name: newEmp.full_name,
+                  avatar: newEmp.avatar_url,
+                  message: statusMessage
+                }];
+              });
+            }
+            
+            // Note changed
+            if (oldEmp.status_note !== newEmp.status_note && newEmp.status_note) {
+              console.log('🔔 POLLING: Note change detected for', newEmp.full_name);
+              setTvAlerts(prev => {
+                // Allow multiple note changes - only block exact same note within 5 seconds
+                const noteHash = newEmp.status_note.substring(0, 20);
+                const recentSameNote = prev.find(a => 
+                  a.id.includes(`${newEmp.id}-note`) && 
+                  a.message.includes(noteHash)
+                );
+                if (recentSameNote) return prev;
+                return [...prev, {
+                  id: `${newEmp.id}-note-${Date.now()}`,
+                  type: 'note',
+                  name: newEmp.full_name,
+                  avatar: newEmp.avatar_url,
+                  message: `📝 "${newEmp.status_note.substring(0, 50)}${newEmp.status_note.length > 50 ? '...' : ''}"`
+                }];
+              });
+              
+              // Mark as recently updated
+              setRecentlyUpdated(prev => ({
+                ...prev,
+                [newEmp.id]: Date.now()
+              }));
+            }
+          }
         });
-
-        return () => {
-          clearTimeout(timer);
-          clearInterval(interval);
-          events.forEach(event => {
-            window.removeEventListener(event, refreshSession);
-          });
-        };
+      }
+      
+      setEmployees(newData);
+      setDataLoading(false);
+    } catch (err) {
+      console.error('❌ Exception fetching employees:', err);
+      if (isMountedRef.current) {
+        setDataLoading(false);
       }
     }
+  }, []);
 
-    return () => {
-      clearInterval(interval);
-    };
-  }, [currentUser]);
-
-  const fetchEmployees = async () => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .order('full_name');
-    
-    if (!error && data) {
-      setEmployees(data);
-    }
-  };
-
-  // Fetch prayer times for Riyadh, KSA using Umm Al-Qura method (method 4)
-  const fetchPrayerTimes = async () => {
+  // Fetch prayer times from API
+  const fetchPrayerTimes = useCallback(async () => {
     try {
       const today = new Date();
-      const dateStr = `${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}`;
+      const year = today.getFullYear();
+      const month = today.getMonth() + 1;
+      const day = today.getDate();
+      
       const response = await fetch(
-        `https://api.aladhan.com/v1/timingsByAddress/${dateStr}?address=Riyadh,Saudi Arabia&method=4`
+        `https://api.aladhan.com/v1/timings/${day}-${month}-${year}?latitude=31.7683&longitude=35.2137&method=4`
       );
       const data = await response.json();
       
-      if (data.status === 'OK' && data.data && data.data.timings) {
+      if (data.code === 200 && data.data) {
         setPrayerTimes(data.data.timings);
-        calculateNextPrayer(data.data.timings);
-        // Store date information from API
-        if (data.data.date) {
-          setPrayerDateInfo(data.data.date);
+        setPrayerDateInfo(data.data.date);
+      }
+    } catch (err) {
+      console.error('Error fetching prayer times:', err);
+    }
+  }, []);
+
+  // Handle status expiration - auto change to Available
+  const handleStatusExpired = useCallback(async (employeeId) => {
+    // Only auto-change if it's the current user
+    if (currentUser && employeeId === currentUser.id) {
+      console.log('⏰ Busy time expired, changing to Available');
+      try {
+        const updates = {
+          status: 'free',
+          busy_until: null,
+          updated_at: new Date().toISOString()
+        };
+        
+        const { error } = await supabase
+          .from('user_profiles')
+          .update(updates)
+          .eq('id', currentUser.id);
+        
+        if (!error) {
+          updateProfile(updates);
+          setEmployees(prev => prev.map(emp => 
+            emp.id === currentUser.id ? { ...emp, ...updates } : emp
+          ));
+          showNotification('Your busy time has ended - now Available', 'free');
         }
-        // Reset last played prayer when fetching new prayer times (new day)
-        setLastPlayedPrayer(null);
+      } catch (err) {
+        console.error('Error auto-updating status:', err);
       }
-    } catch (error) {
-      console.error('Error fetching prayer times:', error);
+    } else {
+      // For other employees, just refresh their data
+      fetchEmployees();
     }
-  };
+  }, [currentUser, updateProfile, fetchEmployees, showNotification]);
 
-  // Calculate next prayer and countdown
-  const calculateNextPrayer = (timings) => {
-    const now = new Date();
-    const currentTime = now.getHours() * 60 + now.getMinutes(); // Current time in minutes
+  // Calculate next prayer
+  useEffect(() => {
+    if (!prayerTimes) return;
     
-    const prayerNames = {
-      'Fajr': 'Fajr',
-      'Dhuhr': 'Dhuhr',
-      'Asr': 'Asr',
-      'Maghrib': 'Maghrib',
-      'Isha': 'Isha'
-    };
+    const prayers = [
+      { name: 'Fajr', time: prayerTimes.Fajr },
+      { name: 'Dhuhr', time: prayerTimes.Dhuhr },
+      { name: 'Asr', time: prayerTimes.Asr },
+      { name: 'Maghrib', time: prayerTimes.Maghrib },
+      { name: 'Isha', time: prayerTimes.Isha }
+    ];
     
-    const prayers = Object.keys(prayerNames).map(name => {
-      const timeStr = timings[name];
-      const [hours, minutes] = timeStr.split(':').map(Number);
-      const timeInMinutes = hours * 60 + minutes;
-      return {
-        name: prayerNames[name],
-        time: timeStr,
-        timeInMinutes: timeInMinutes
-      };
-    });
-    
-    // Find next prayer
-    let nextPrayerInfo = null;
-    for (const prayer of prayers) {
-      if (prayer.timeInMinutes > currentTime) {
-        nextPrayerInfo = prayer;
-        break;
-      }
-    }
-    
-    // If no prayer found for today, use tomorrow's Fajr
-    if (!nextPrayerInfo) {
-      nextPrayerInfo = {
-        name: 'Fajr',
-        time: timings.Fajr,
-        timeInMinutes: prayers[0].timeInMinutes + 24 * 60 // Add 24 hours
-      };
-    }
-    
-    setNextPrayer(nextPrayerInfo);
-  };
-
-  // Play Adhan audio and show notification
-  const playAdhan = (prayerName) => {
-    try {
-      // Play audio
-      if (adhanAudioRef.current) {
-        adhanAudioRef.current.currentTime = 0; // Reset to beginning
-        adhanAudioRef.current.play().catch(error => {
-          console.error('Error playing Adhan audio:', error);
-        });
+    const updateNextPrayer = () => {
+      const now = new Date();
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      
+      for (const prayer of prayers) {
+        const [hours, minutes] = prayer.time.split(':').map(Number);
+        const prayerMinutes = hours * 60 + minutes;
+        
+        if (prayerMinutes > currentMinutes) {
+          setNextPrayer(prayer);
+          
+          const diffMinutes = prayerMinutes - currentMinutes;
+          const hours = Math.floor(diffMinutes / 60);
+          const mins = diffMinutes % 60;
+          setCountdown(hours > 0 ? `${hours}h ${mins}m` : `${mins}m`);
+          
+          // Check if it's prayer time (within 1 minute)
+          if (diffMinutes <= 1 && lastPlayedPrayer !== prayer.name) {
+            if (adhanAudioRef.current) {
+              adhanAudioRef.current.play().catch(console.error);
+            }
+            setLastPlayedPrayer(prayer.name);
+          }
+          
+          return;
+        }
       }
       
-      // Show notification
-      setNotification({
-        type: 'status',
-        status: 'important', // Use important status for special styling
-        name: 'Adan Time',
-        message: `حان وقت الصلاه - ${prayerName} - جزاكم الله خير`,
-        emoji: '🕌'
-      });
-    } catch (error) {
-      console.error('Error in playAdhan:', error);
-    }
-  };
+      // After Isha, next prayer is Fajr tomorrow
+      setNextPrayer(prayers[0]);
+      const [fajrH, fajrM] = prayers[0].time.split(':').map(Number);
+      const fajrMinutes = fajrH * 60 + fajrM;
+      const remaining = (24 * 60 - currentMinutes) + fajrMinutes;
+      const hours = Math.floor(remaining / 60);
+      const mins = remaining % 60;
+      setCountdown(`${hours}h ${mins}m`);
+    };
+    
+    updateNextPrayer();
+    const interval = setInterval(updateNextPrayer, 30000);
+    return () => clearInterval(interval);
+  }, [prayerTimes, lastPlayedPrayer]);
 
-  // Update current time display (without seconds)
+  // Update current time
   useEffect(() => {
     const updateTime = () => {
       const now = new Date();
-      const hours = String(now.getHours()).padStart(2, '0');
-      const minutes = String(now.getMinutes()).padStart(2, '0');
-      setCurrentTime(`${hours}:${minutes}`);
+      setCurrentTime(now.toLocaleTimeString('en-US', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false 
+      }));
     };
     
     updateTime();
-    const interval = setInterval(updateTime, 60000); // Update every minute since we don't show seconds
+    const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
 
-  // Update countdown timer
-  useEffect(() => {
-    if (!nextPrayer) return;
+  // ============================================
+  // Employee Status Functions
+  // ============================================
+  const updateStatus = async (newStatus, duration = null) => {
+    if (!currentUser) return;
     
-    const updateCountdown = () => {
-      const now = new Date();
-      const currentHours = now.getHours();
-      const currentMinutes = now.getMinutes();
-      const currentSeconds = now.getSeconds();
-      const currentTime = currentHours * 60 + currentMinutes; // Current time in minutes
-      
-      let timeUntilPrayer = nextPrayer.timeInMinutes - currentTime;
-      
-      // Handle case where next prayer is tomorrow
-      if (timeUntilPrayer < 0) {
-        timeUntilPrayer += 24 * 60;
-      }
-      
-      // Calculate total seconds remaining
-      const totalSeconds = timeUntilPrayer * 60 - currentSeconds;
-      const hours = Math.floor(totalSeconds / 3600);
-      const minutes = Math.floor((totalSeconds % 3600) / 60);
-      const seconds = totalSeconds % 60;
-      
-      if (hours > 0) {
-        setCountdown(`${hours}h ${minutes}m ${seconds}s`);
-      } else if (minutes > 0) {
-        setCountdown(`${minutes}m ${seconds}s`);
-      } else {
-        setCountdown(`${seconds}s`);
-      }
-      
-      // Check if prayer time has arrived (within 1 second tolerance)
-      if (totalSeconds <= 1 && totalSeconds >= 0 && prayerTimes) {
-        const currentPrayerKey = `${nextPrayer.name}-${nextPrayer.time}`;
-        
-        // Only play Adhan if we haven't played it for this prayer yet
-        if (lastPlayedPrayer !== currentPrayerKey) {
-          playAdhan(nextPrayer.name);
-          setLastPlayedPrayer(currentPrayerKey);
-        }
-        
-        // Recalculate next prayer
-        calculateNextPrayer(prayerTimes);
-      }
-    };
-    
-    updateCountdown();
-    const interval = setInterval(updateCountdown, 1000); // Update every second
-    
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nextPrayer, prayerTimes]);
-
-  const handleLogin = async () => {
-    if (!username || !password) {
-      alert('Please enter username and password');
-      return;
-    }
-
-    // Find user by username
-    const { data: users, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('username', username)
-      .single();
-
-    if (error || !users) {
-      alert('Invalid username or password');
-      return;
-    }
-
-    // Verify password
-    const passwordMatch = await verifyPassword(password, users.password_hash);
-    if (!passwordMatch) {
-      alert('Invalid username or password');
-      return;
-    }
-
-    // Login successful - store user ID and session expiry (15 minutes)
-    localStorage.setItem('currentUserId', users.id);
-    localStorage.setItem('sessionExpiry', (Date.now() + SESSION_DURATION).toString());
-    setCurrentUser(users);
-    
-    // Update employees list to include the logged-in user's latest data
-    setEmployees(prev => {
-      const existingIndex = prev.findIndex(emp => emp.id === users.id);
-      if (existingIndex >= 0) {
-        // Update existing employee
-        const updated = [...prev];
-        updated[existingIndex] = users;
-        return updated;
-      } else {
-        // Add new employee (shouldn't happen, but just in case)
-        return [...prev, users];
-      }
-    });
-    
-    // Admins can access both admin panel and employee control panel
-    // Default to admin panel, but they can switch
-    if (users.role === 'admin') {
-      setView('admin');
-    } else {
-      setView('employee');
-    }
-    
-    setUsername('');
-    setPassword('');
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('currentUserId');
-    localStorage.removeItem('sessionExpiry');
-    setCurrentUser(null);
-    setView('public');
-    setUsername('');
-    setPassword('');
-  };
-
-  const updateStatus = async (status, durationOverride = null) => {
-    // SECURITY: Verify user is logged in
-    if (!currentUser) {
-      alert('You must be logged in to update status');
-      return;
-    }
-    
-    // SECURITY: Double-check currentUser is valid
-    const savedUserId = localStorage.getItem('currentUserId');
-    if (!savedUserId || savedUserId !== currentUser.id) {
-      alert('Session expired. Please login again.');
-      handleLogout();
-      return;
-    }
-
-    // Calculate duration - use override if provided, otherwise use custom or preset
-    let durationMinutes = durationOverride;
-    if (durationMinutes === null) {
-      if (useCustomDuration && customDuration) {
-        durationMinutes = parseInt(customDuration);
-        if (isNaN(durationMinutes) || durationMinutes <= 0) {
-          alert('Please enter a valid custom duration');
-          return;
-        }
-        if (durationMinutes > MAX_BUSY_DURATION_MINUTES) {
-          alert(`Maximum busy duration is ${MAX_BUSY_DURATION_MINUTES} minutes (24 hours). Please enter a value between 1 and ${MAX_BUSY_DURATION_MINUTES}.`);
-          return;
-        }
-      } else {
-        durationMinutes = busyDuration;
-      }
-    }
-    
-    // Validate duration override as well
-    if (durationMinutes > MAX_BUSY_DURATION_MINUTES) {
-      alert(`Maximum busy duration is ${MAX_BUSY_DURATION_MINUTES} minutes (24 hours). Please enter a value between 1 and ${MAX_BUSY_DURATION_MINUTES}.`);
-      return;
-    }
-
     const updates = {
-      status,
-      // Note is now independent - don't clear it when changing status
-      busy_until: status === 'busy' ? new Date(Date.now() + durationMinutes * 60000).toISOString() : null, // Only set timer for busy status
+      status: newStatus,
       updated_at: new Date().toISOString()
     };
-
-    // SECURITY: Always verify we're updating our own profile
-    // This is critical - never allow updating other users' profiles
-    const { error, data } = await supabase
-      .from('profiles')
-      .update(updates)
-      .eq('id', currentUser.id)  // CRITICAL: Only update current user's profile
-      .select(); // Select to ensure realtime triggers
     
-    // SECURITY: Verify the update was for the correct user
-    if (data && data.length > 0 && data[0].id !== currentUser.id) {
-      console.error('SECURITY ERROR: Attempted to update wrong profile!');
-      alert('Security error: Cannot update this profile');
-      return;
-    }
-
-    if (!error) {
-      console.log('✅ Status updated in database:', updates);
-      // IMMEDIATE UPDATE: Update local state immediately for instant UI feedback
-      const updatedUser = { ...currentUser, ...updates };
-      setCurrentUser(updatedUser);
-      
-      // IMMEDIATE UPDATE: Update employees list immediately so dashboard shows new status right away
-      setEmployees(prev => 
-        prev.map(emp => emp.id === currentUser.id ? updatedUser : emp)
-      );
-      
-      // Then fetch the complete updated profile from database to ensure all fields are correct
-      const { data: updatedProfile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', currentUser.id)
-        .single();
-      
-      if (updatedProfile) {
-        // Ensure avatar_url is preserved - never lose it
-        const preservedAvatar = updatedProfile.avatar_url || currentUser.avatar_url;
-        const finalUser = { ...updatedProfile, avatar_url: preservedAvatar };
-        setCurrentUser(finalUser);
-        
-        // Update employees list with the complete profile
-        setEmployees(prev => 
-          prev.map(emp => emp.id === currentUser.id ? finalUser : emp)
-        );
-      }
-      
-      if (status === 'free') {
-        setCustomDuration('');
-        setUseCustomDuration(false);
-      }
+    if (newStatus === 'busy' && duration) {
+      const busyUntil = new Date(Date.now() + duration * 60 * 1000);
+      updates.busy_until = busyUntil.toISOString();
     } else {
-      alert('Error updating status: ' + error.message);
-    }
-  };
-
-  // Update note (independent of status)
-  const updateNote = async () => {
-    // SECURITY: Verify user is logged in
-    if (!currentUser) {
-      alert('You must be logged in to update note');
-      return;
+      updates.busy_until = null;
     }
     
-    // SECURITY: Double-check currentUser is valid
-    const savedUserId = localStorage.getItem('currentUserId');
-    if (!savedUserId || savedUserId !== currentUser.id) {
-      alert('Session expired. Please login again.');
-      handleLogout();
-      return;
-    }
-
-    const noteValue = noteText.trim() || null; // Store null if empty, otherwise the trimmed note
-
-    const updates = {
-      status_note: noteValue,
-      updated_at: new Date().toISOString()
-    };
-
-    // SECURITY: Always verify we're updating our own profile
-    const { error, data } = await supabase
-      .from('profiles')
-      .update(updates)
-      .eq('id', currentUser.id)  // CRITICAL: Only update current user's profile
-      .select();
-    
-    // SECURITY: Verify the update was for the correct user
-    if (data && data.length > 0 && data[0].id !== currentUser.id) {
-      console.error('SECURITY ERROR: Attempted to update wrong profile!');
-      alert('Security error: Cannot update this profile');
-      return;
-    }
-
-    if (!error) {
-      console.log('✅ Note updated in database');
-      // IMMEDIATE UPDATE: Update local state immediately for instant UI feedback
-      const updatedUser = { ...currentUser, status_note: noteValue };
-      setCurrentUser(updatedUser);
-      
-      // IMMEDIATE UPDATE: Update employees list immediately
-      setEmployees(prev => 
-        prev.map(emp => emp.id === currentUser.id ? updatedUser : emp)
-      );
-      
-      // Show notification
-      setNotification({
-        type: 'note',
-        name: currentUser.full_name,
-        note: noteValue || '',
-        emoji: '💬'
-      });
-      
-      // Fetch complete updated profile to ensure all fields are correct
-      const { data: updatedProfile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', currentUser.id)
-        .single();
-      
-      if (updatedProfile) {
-        // Ensure avatar_url is preserved
-        const preservedAvatar = updatedProfile.avatar_url || currentUser.avatar_url;
-        const finalUser = { ...updatedProfile, avatar_url: preservedAvatar };
-        setCurrentUser(finalUser);
-        
-        // Update employees list with the complete profile
-        setEmployees(prev => 
-          prev.map(emp => emp.id === currentUser.id ? finalUser : emp)
-        );
-      }
-    } else {
-      alert('Error updating note: ' + error.message);
-    }
-  };
-
-  // Remove note
-  const removeNote = async () => {
-    // SECURITY: Verify user is logged in
-    if (!currentUser) {
-      alert('You must be logged in to remove note');
-      return;
-    }
-    
-    // SECURITY: Double-check currentUser is valid
-    const savedUserId = localStorage.getItem('currentUserId');
-    if (!savedUserId || savedUserId !== currentUser.id) {
-      alert('Session expired. Please login again.');
-      handleLogout();
-      return;
-    }
-
-    const updates = {
-      status_note: null,
-      updated_at: new Date().toISOString()
-    };
-
-    // SECURITY: Always verify we're updating our own profile
-    const { error, data } = await supabase
-      .from('profiles')
-      .update(updates)
-      .eq('id', currentUser.id)  // CRITICAL: Only update current user's profile
-      .select();
-    
-    // SECURITY: Verify the update was for the correct user
-    if (data && data.length > 0 && data[0].id !== currentUser.id) {
-      console.error('SECURITY ERROR: Attempted to update wrong profile!');
-      alert('Security error: Cannot update this profile');
-      return;
-    }
-
-    if (!error) {
-      console.log('✅ Note removed from database');
-      // Clear the note input
-      setNoteText('');
-      
-      // IMMEDIATE UPDATE: Update local state immediately for instant UI feedback
-      const updatedUser = { ...currentUser, status_note: null };
-      setCurrentUser(updatedUser);
-      
-      // IMMEDIATE UPDATE: Update employees list immediately
-      setEmployees(prev => 
-        prev.map(emp => emp.id === currentUser.id ? updatedUser : emp)
-      );
-      
-      // Fetch complete updated profile to ensure all fields are correct
-      const { data: updatedProfile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', currentUser.id)
-        .single();
-      
-      if (updatedProfile) {
-        // Ensure avatar_url is preserved
-        const preservedAvatar = updatedProfile.avatar_url || currentUser.avatar_url;
-        const finalUser = { ...updatedProfile, avatar_url: preservedAvatar };
-        setCurrentUser(finalUser);
-        
-        // Update employees list with the complete profile
-        setEmployees(prev => 
-          prev.map(emp => emp.id === currentUser.id ? finalUser : emp)
-        );
-      }
-    } else {
-      alert('Error removing note: ' + error.message);
-    }
-  };
-
-  // Avatar upload function
-  const uploadAvatar = async (file, userId = null) => {
-    if (!file) return null;
-    const targetUserId = userId || currentUser?.id;
-    if (!targetUserId) return null;
-
-    setUploadingAvatar(true);
     try {
-      // Check if bucket exists, if not use data URL as fallback
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${targetUserId}-${Math.random()}.${fileExt}`;
-      const filePath = `avatars/${fileName}`;
+      const { error } = await supabase
+        .from('user_profiles')
+        .update(updates)
+        .eq('id', currentUser.id);
+      
+      if (error) throw error;
+      
+      // Update profile in auth context
+      updateProfile(updates);
+      
+      // Also update local employees array immediately for instant UI feedback
+      setEmployees(prev => prev.map(emp => 
+        emp.id === currentUser.id ? { ...emp, ...updates } : emp
+      ));
+      
+      // Use status-specific notification color
+      const statusLabel = newStatus === 'free' ? 'Available' : newStatus === 'important' ? 'Important Only' : 'Busy';
+      showNotification(`Status changed to ${statusLabel}`, newStatus);
+      console.log('✅ Status updated to:', newStatus);
+    } catch (err) {
+      console.error('Error updating status:', err);
+      showNotification('Failed to update status', 'error');
+    }
+  };
 
-      // Try to upload to Supabase Storage
-      const { error: uploadError } = await supabase.storage
+  const saveNote = async () => {
+    if (!currentUser) return;
+    
+    const updates = {
+      status_note: noteText,
+      updated_at: new Date().toISOString()
+    };
+    
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update(updates)
+        .eq('id', currentUser.id);
+      
+      if (error) throw error;
+      
+      // Update profile in auth context
+      updateProfile(updates);
+      
+      // Also update local employees array for instant UI feedback
+      setEmployees(prev => prev.map(emp => 
+        emp.id === currentUser.id ? { ...emp, ...updates } : emp
+      ));
+      
+      showNotification('Note saved!', 'success');
+    } catch (err) {
+      console.error('Error saving note:', err);
+      showNotification('Failed to save note', 'error');
+    }
+  };
+
+  // ============================================
+  // Profile Functions
+  // ============================================
+  const uploadAvatar = async (file, userId) => {
+    if (!file) return null;
+    
+    try {
+      // Validate file
+      if (!file.type.startsWith('image/')) {
+        showNotification('Please select an image file', 'error');
+        return null;
+      }
+      
+      if (file.size > 5 * 1024 * 1024) {
+        showNotification('Image must be less than 5MB', 'error');
+        return null;
+      }
+      
+      const fileExt = file.name.split('.').pop().toLowerCase();
+      const fileName = `${userId}-${Date.now()}.${fileExt}`;
+      const filePath = `${fileName}`; // Store directly in bucket root
+      
+      console.log('📤 Uploading avatar:', filePath);
+      
+      // Use upsert to overwrite existing files
+      const { data: uploadData, error: uploadError } = await supabase.storage
         .from('avatars')
         .upload(filePath, file, {
           cacheControl: '3600',
           upsert: true
         });
-
+      
       if (uploadError) {
-        // If bucket doesn't exist, use data URL as fallback
-        if (uploadError.message.includes('Bucket not found') || uploadError.message.includes('not found')) {
-          console.warn('Storage bucket not found, using data URL');
-          const reader = new FileReader();
-          return new Promise((resolve) => {
-            reader.onloadend = () => {
-              setUploadingAvatar(false);
-              resolve(reader.result); // Return data URL
-            };
-            reader.readAsDataURL(file);
-          });
+        console.error('❌ Upload error:', uploadError);
+        // Check if it's a bucket not found error
+        if (uploadError.message?.includes('not found') || uploadError.message?.includes('Bucket')) {
+          showNotification('Storage bucket not configured. Please set up "avatars" bucket in Supabase.', 'error');
+        } else {
+          showNotification(`Upload failed: ${uploadError.message}`, 'error');
         }
-        throw uploadError;
+        return null;
       }
-
-      // Get public URL
-      const { data } = supabase.storage
+      
+      console.log('✅ Upload successful:', uploadData);
+      
+      const { data: { publicUrl } } = supabase.storage
         .from('avatars')
         .getPublicUrl(filePath);
-
-      setUploadingAvatar(false);
-      return data.publicUrl;
-    } catch (error) {
-      console.error('Error uploading avatar:', error);
-      setUploadingAvatar(false);
       
-      // Fallback to data URL if storage fails
-      if (error.message.includes('Bucket not found') || error.message.includes('not found')) {
-        const reader = new FileReader();
-        return new Promise((resolve) => {
-          reader.onloadend = () => {
-            resolve(reader.result); // Return data URL
-          };
-          reader.readAsDataURL(file);
-        });
-      }
-      
-      alert('Error uploading avatar: ' + error.message + '\n\nNote: Using image as data URL. Set up Supabase Storage bucket "avatars" for better performance.');
+      console.log('🔗 Public URL:', publicUrl);
+      return publicUrl;
+    } catch (err) {
+      console.error('❌ Exception uploading avatar:', err);
+      showNotification('Failed to upload avatar. Check console for details.', 'error');
       return null;
     }
   };
 
-  // Handle avatar file selection
-  const handleAvatarChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      // Validate file type
-      if (!file.type.startsWith('image/')) {
-        alert('Please select an image file');
-        return;
-      }
-      // Validate file size (max 5MB)
-      if (file.size > 5 * 1024 * 1024) {
-        alert('Image size must be less than 5MB');
-        return;
-      }
-      setAvatarFile(file);
-      // Create preview
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setAvatarPreview(reader.result);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  // Update profile (name and avatar)
-  const updateProfile = async () => {
-    // SECURITY: Verify user is logged in
-    if (!currentUser) {
-      alert('You must be logged in to update profile');
-      return;
-    }
+  const saveProfile = async () => {
+    if (!currentUser) return;
     
-    // SECURITY: Double-check currentUser is valid
-    const savedUserId = localStorage.getItem('currentUserId');
-    if (!savedUserId || savedUserId !== currentUser.id) {
-      alert('Session expired. Please login again.');
-      handleLogout();
-      return;
-    }
-
     setSavingProfile(true);
+    
     try {
-      const updates = {};
-
-      // Update name if changed
-      if (editingName && editingName !== currentUser.full_name) {
-        updates.full_name = editingName;
-      }
-
-      // Upload avatar if selected
+      let avatarUrl = currentUser.avatar_url;
+      
       if (avatarFile) {
-        const avatarUrl = await uploadAvatar(avatarFile);
-        if (avatarUrl) {
-          updates.avatar_url = avatarUrl;
-        }
+        setUploadingAvatar(true);
+        const newUrl = await uploadAvatar(avatarFile, currentUser.id);
+        if (newUrl) avatarUrl = newUrl;
+        setUploadingAvatar(false);
       }
-
-      // Update profile if there are changes
-      if (Object.keys(updates).length > 0) {
-        // SECURITY: Always verify we're updating our own profile
-        const { error, data } = await supabase
-          .from('profiles')
-          .update(updates)
-          .eq('id', currentUser.id)  // CRITICAL: Only update current user's profile
-          .select();
-        
-        // SECURITY: Verify the update was for the correct user
-        if (data && data.length > 0 && data[0].id !== currentUser.id) {
-          console.error('SECURITY ERROR: Attempted to update wrong profile!');
-          alert('Security error: Cannot update this profile');
-          return;
-        }
-
-        if (error) throw error;
-
-        // Update local state
-        setCurrentUser({ ...currentUser, ...updates });
-        setEditingName('');
-        setAvatarFile(null);
-        setAvatarPreview(null);
-        alert('Profile updated successfully!');
-      }
-    } catch (error) {
-      console.error('Error updating profile:', error);
-      alert('Error updating profile: ' + error.message);
+      
+      const updates = {
+        full_name: editingName || currentUser.full_name,
+        avatar_url: avatarUrl,
+        updated_at: new Date().toISOString()
+      };
+      
+      const { error } = await supabase
+        .from('user_profiles')
+        .update(updates)
+        .eq('id', currentUser.id);
+      
+      if (error) throw error;
+      
+      // Update profile in auth context
+      updateProfile(updates);
+      
+      // Also update local employees array
+      setEmployees(prev => prev.map(emp => 
+        emp.id === currentUser.id ? { ...emp, ...updates } : emp
+      ));
+      
+      showNotification('Profile saved!', 'success');
+      setShowProfileSettings(false);
+      setAvatarFile(null);
+      setAvatarPreview(null);
+    } catch (err) {
+      console.error('Error saving profile:', err);
+      showNotification('Failed to save profile', 'error');
     } finally {
       setSavingProfile(false);
     }
   };
 
-  // Change password
-  const changePassword = async () => {
-    // SECURITY: Verify user is logged in
-    if (!currentUser) {
-      alert('You must be logged in to change password');
-      return;
-    }
-    
-    // SECURITY: Double-check currentUser is valid
-    const savedUserId = localStorage.getItem('currentUserId');
-    if (!savedUserId || savedUserId !== currentUser.id) {
-      alert('Session expired. Please login again.');
-      handleLogout();
-      return;
-    }
-    
-    if (!currentPassword || !newPassword || !confirmPassword) {
-      alert('Please fill in all password fields');
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      alert('New passwords do not match');
-      return;
-    }
-
-    if (newPassword.length < 6) {
-      alert('Password must be at least 6 characters');
-      return;
-    }
-
+  // ============================================
+  // Admin Functions
+  // ============================================
+  const updateEmployee = async (empId, updates) => {
     try {
-      // Verify current password
-      const passwordMatch = await verifyPassword(currentPassword, currentUser.password_hash);
-      if (!passwordMatch) {
-        alert('Current password is incorrect');
-        return;
-      }
-
-      // Hash new password
-      const hashedPassword = await hashPassword(newPassword);
-
-      // SECURITY: Always verify we're updating our own profile
-      const { error, data } = await supabase
-        .from('profiles')
-        .update({ password_hash: hashedPassword })
-        .eq('id', currentUser.id)  // CRITICAL: Only update current user's password
-        .select();
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq('id', empId);
       
-      // SECURITY: Verify the update was for the correct user
-      if (data && data.length > 0 && data[0].id !== currentUser.id) {
-        console.error('SECURITY ERROR: Attempted to update wrong profile password!');
-        alert('Security error: Cannot update this profile');
-        return;
-      }
-
       if (error) throw error;
-
-      // Update local state
-      setCurrentUser({ ...currentUser, password_hash: hashedPassword });
-      alert('Password changed successfully!');
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-    } catch (error) {
-      console.error('Error changing password:', error);
-      alert('Error changing password: ' + error.message);
+      
+      showNotification('Employee updated!', 'success');
+      setEditingEmployee(null);
+      fetchEmployees();
+    } catch (err) {
+      console.error('Error updating employee:', err);
+      showNotification('Failed to update employee', 'error');
     }
   };
 
-  // Initialize editing name when opening profile settings
+  const deleteEmployee = async (empId) => {
+    if (!confirm('Are you sure you want to remove this employee?')) return;
+    
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .delete()
+        .eq('id', empId);
+      
+      if (error) throw error;
+      
+      showNotification('Employee removed', 'success');
+      fetchEmployees();
+    } catch (err) {
+      console.error('Error deleting employee:', err);
+      showNotification('Failed to remove employee', 'error');
+    }
+  };
+
+  // ============================================
+  // Duration Handling
+  // ============================================
+  const handleCustomDurationChange = (value) => {
+    setCustomDuration(value);
+    setDurationWarning('');
+    
+    if (customDurationTimeoutRef.current) {
+      clearTimeout(customDurationTimeoutRef.current);
+    }
+    
+    customDurationTimeoutRef.current = setTimeout(() => {
+      const duration = parseInt(value);
+      if (isNaN(duration) || duration < 1) {
+        setDurationWarning('Please enter a valid duration');
+      } else if (duration > MAX_BUSY_DURATION_MINUTES) {
+        setDurationWarning(`Maximum duration is ${MAX_BUSY_DURATION_MINUTES} minutes (24 hours)`);
+      }
+    }, 500);
+  };
+
+  const getEffectiveDuration = () => {
+    if (useCustomDuration && customDuration) {
+      const duration = parseInt(customDuration);
+      if (!isNaN(duration) && duration > 0) {
+        return Math.min(duration, MAX_BUSY_DURATION_MINUTES);
+      }
+    }
+    return busyDuration;
+  };
+
+  // ============================================
+  // Initialize App
+  // ============================================
+  useEffect(() => {
+    isMountedRef.current = true;
+    let isSubscribed = true;
+    
+    // Fetch initial data
+    fetchEmployees();
+    fetchPrayerTimes();
+    fetchSiteSettings();
+    
+    // Setup realtime subscription for site_settings (announcements)
+    const setupSiteSettingsRealtime = () => {
+      if (!isSubscribed) return;
+      
+      const channel = supabase
+        .channel('site-settings-realtime')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'site_settings' },
+          (payload) => {
+            if (!isMountedRef.current) return;
+            console.log('📢 Site settings updated in real-time');
+            if (payload.new) {
+              setSiteSettings(payload.new);
+            }
+          }
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('✅ Site settings realtime active');
+          }
+        });
+      
+      siteSettingsChannelRef.current = channel;
+    };
+    
+    setupSiteSettingsRealtime();
+    
+    // Setup realtime subscription with proper error handling
+    const setupRealtime = () => {
+      if (!isSubscribed) return;
+      
+      const channelName = `user-profiles-${Date.now()}`;
+      console.log('📡 Setting up realtime channel:', channelName);
+      
+      const channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'user_profiles' },
+          (payload) => {
+            if (!isMountedRef.current) return;
+            
+            console.log('🔔 REALTIME EVENT RECEIVED:', payload.eventType, payload.new?.full_name || payload.old?.id);
+            
+            if (payload.eventType === 'INSERT') {
+              console.log('➕ New employee inserted:', payload.new.full_name);
+              setEmployees(prev => [...prev, payload.new]);
+              // Show TV alert for new employee
+              const newEmp = payload.new;
+              setTvAlerts(prev => [...prev, {
+                id: `${newEmp.id}-${Date.now()}`,
+                type: 'note',
+                name: newEmp.full_name,
+                avatar: newEmp.avatar_url,
+                message: 'joined the team!'
+              }]);
+            } else if (payload.eventType === 'UPDATE') {
+              // Use ref to get current employees (avoids stale closure)
+              const oldEmp = employeesRef.current.find(e => e.id === payload.new.id);
+              const newEmp = payload.new;
+              
+              console.log('📝 Employee updated:', newEmp.full_name);
+              console.log('   Old status:', oldEmp?.status, '-> New status:', newEmp.status);
+              console.log('   Old note:', oldEmp?.status_note, '-> New note:', newEmp.status_note);
+              
+              // Update employees state
+              setEmployees(prev => prev.map(emp => 
+                emp.id === payload.new.id ? { ...emp, ...payload.new } : emp
+              ));
+              
+              // Check what changed and create appropriate TV alert
+              if (oldEmp) {
+                // Status changed
+                if (oldEmp.status !== newEmp.status) {
+                  console.log('🚨 STATUS CHANGE DETECTED! Creating TV alert...');
+                  
+                  // Calculate busy duration message
+                  let statusMessage = 'updated their status';
+                  if (newEmp.status === 'free') {
+                    statusMessage = 'is now Available ✓';
+                  } else if (newEmp.status === 'important') {
+                    statusMessage = 'Can be reached for important matters only ⚠️';
+                  } else if (newEmp.status === 'busy') {
+                    if (newEmp.busy_until) {
+                      const busyUntil = new Date(newEmp.busy_until);
+                      const now = new Date();
+                      const diffMs = busyUntil - now;
+                      const diffMins = Math.round(diffMs / 60000);
+                      if (diffMins > 0) {
+                        if (diffMins >= 60) {
+                          const hours = Math.floor(diffMins / 60);
+                          const mins = diffMins % 60;
+                          statusMessage = `Will be busy for ${hours}h ${mins}m ⏱`;
+                        } else {
+                          statusMessage = `Will be busy for ${diffMins} minutes ⏱`;
+                        }
+                      } else {
+                        statusMessage = 'is now Busy ⏱';
+                      }
+                    } else {
+                      statusMessage = 'is now Busy ⏱';
+                    }
+                  }
+                  
+                  setTvAlerts(prev => {
+                    // Allow rapid status changes - each gets its own alert
+                    const newAlert = {
+                      id: `${newEmp.id}-status-${newEmp.status}-${Date.now()}`,
+                      type: newEmp.status,
+                      name: newEmp.full_name,
+                      avatar: newEmp.avatar_url,
+                      message: statusMessage
+                    };
+                    console.log('📺 Adding TV Alert:', newAlert);
+                    return [...prev, newAlert];
+                  });
+                }
+                
+                // Note changed
+                if (oldEmp.status_note !== newEmp.status_note && newEmp.status_note) {
+                  console.log('📝 NOTE CHANGE DETECTED! Creating TV alert...');
+                  setTvAlerts(prev => {
+                    const newAlert = {
+                      id: `${newEmp.id}-note-${Date.now()}`,
+                      type: 'note',
+                      name: newEmp.full_name,
+                      avatar: newEmp.avatar_url,
+                      message: `📝 "${newEmp.status_note.substring(0, 50)}${newEmp.status_note.length > 50 ? '...' : ''}"`
+                    };
+                    console.log('📺 Adding TV Alert:', newAlert);
+                    return [...prev, newAlert];
+                  });
+                  
+                  // Mark as recently updated (for 10 minutes)
+                  setRecentlyUpdated(prev => ({
+                    ...prev,
+                    [newEmp.id]: Date.now()
+                  }));
+                }
+              } else {
+                // No old employee found, still show an alert
+                console.log('⚠️ No old employee found in cache, showing generic alert');
+                setTvAlerts(prev => [...prev, {
+                  id: `${newEmp.id}-update-${Date.now()}`,
+                  type: newEmp.status,
+                  name: newEmp.full_name,
+                  avatar: newEmp.avatar_url,
+                  message: 'updated their profile'
+                }]);
+              }
+            } else if (payload.eventType === 'DELETE') {
+              console.log('🗑️ Employee deleted:', payload.old.id);
+              setEmployees(prev => prev.filter(emp => emp.id !== payload.old.id));
+            }
+          }
+        )
+        .subscribe((status, err) => {
+          console.log('📡 Realtime subscription status:', status, err ? `Error: ${err.message || err}` : '');
+          
+          if (status === 'SUBSCRIBED') {
+            console.log('✅ Realtime subscription ACTIVE - listening for changes on user_profiles');
+          } else if (status === 'CHANNEL_ERROR') {
+            console.error('❌ Realtime channel error:', err);
+          } else if (status === 'TIMED_OUT') {
+            console.warn('⏰ Realtime subscription timed out, retrying...');
+            setTimeout(() => {
+              if (isMountedRef.current && isSubscribed) {
+                setupRealtime();
+              }
+            }, 2000);
+          } else if (status === 'CLOSED' && isMountedRef.current && isSubscribed) {
+            console.log('⚠️ Realtime closed, will try to reconnect...');
+            setTimeout(() => {
+              if (isMountedRef.current && isSubscribed) {
+                setupRealtime();
+              }
+            }, 3000);
+          }
+        });
+      
+      realtimeChannelRef.current = channel;
+    };
+    
+    setupRealtime();
+    
+    // Refresh prayer times daily
+    const prayerInterval = setInterval(fetchPrayerTimes, 24 * 60 * 60 * 1000);
+    
+    // Polling fallback for employees - VERY FAST updates every 2 seconds
+    // This ensures near-instant updates for TV dashboard
+    pollingIntervalRef.current = setInterval(() => {
+      fetchEmployees();
+    }, 2000); // Every 2 seconds for near-instant updates
+    
+    return () => {
+      isMountedRef.current = false;
+      isSubscribed = false;
+      if (realtimeChannelRef.current) {
+        supabase.removeChannel(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
+      }
+      if (siteSettingsChannelRef.current) {
+        supabase.removeChannel(siteSettingsChannelRef.current);
+        siteSettingsChannelRef.current = null;
+      }
+      clearInterval(prayerInterval);
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+    };
+  }, [fetchEmployees, fetchPrayerTimes, fetchSiteSettings]);
+
+  // Initialize profile settings when opened
   useEffect(() => {
     if (showProfileSettings && currentUser) {
-      setEditingName(currentUser.full_name);
+      setEditingName(currentUser.full_name || '');
     }
   }, [showProfileSettings, currentUser]);
 
-  // Auto-redirect if logged in user tries to access login page
+  // Sync noteText with currentUser's status_note when currentUser changes
+  // Use a ref to track if we should sync or if user is actively editing
+  const noteInputRef = useRef(null);
+  const lastSyncedNoteRef = useRef('');
+  
   useEffect(() => {
-    if (view === 'login' && currentUser && !loading) {
-      // User is logged in but on login page - redirect to their control panel
-      if (currentUser.role === 'admin') {
-        setView('admin');
-      } else {
-        setView('employee');
+    // Only sync if the currentUser's note changed externally (e.g., from realtime update)
+    // and the user isn't actively editing the input
+    if (currentUser) {
+      const serverNote = currentUser.status_note || '';
+      // Sync if this is first load OR if server note changed AND we're not focused on input
+      if (lastSyncedNoteRef.current !== serverNote && document.activeElement !== noteInputRef.current) {
+        setNoteText(serverNote);
+        lastSyncedNoteRef.current = serverNote;
       }
     }
-  }, [view, currentUser, loading]);
+  }, [currentUser?.status_note]);
 
-  const addEmployee = async () => {
-    if (!newEmployee.username || !newEmployee.full_name || !newEmployee.password) {
-      alert('Please fill in all fields');
-      return;
-    }
-
-    if (newEmployee.password.length < 6) {
-      alert('Password must be at least 6 characters');
-      return;
-    }
-
-    try {
-      // Hash password
-      const hashedPassword = await hashPassword(newEmployee.password);
-
-      // Create profile directly
-      const { data, error } = await supabase
-        .from('profiles')
-        .insert({
-          username: newEmployee.username,
-          password_hash: hashedPassword,
-          full_name: newEmployee.full_name,
-          role: newEmployee.role,
-          status: 'free',
-          avatar_url: `https://ui-avatars.com/api/?name=${encodeURIComponent(newEmployee.full_name)}&background=4F46E5&color=fff&size=128`
-        })
-        .select()
-        .single();
-
-      if (error) {
-        if (error.code === '23505') { // Unique constraint violation
-          alert('Username already exists. Please choose a different username.');
-        } else {
-          alert('Error creating employee: ' + error.message);
-        }
-        return;
-      }
-
-      setShowAddModal(false);
-      setNewEmployee({ username: '', full_name: '', password: '', role: 'employee' });
-      alert('✅ Employee created successfully! They can login immediately with their username and password.');
+  // ============================================
+  // VIEWS / PAGES
+  // ============================================
+  
+  // Public Dashboard View
+  const PublicDashboard = () => (
+    <div className="min-h-screen bg-gradient-image-static p-4 md:p-8">
+      <audio ref={adhanAudioRef} src={adhanAudio} preload="auto" />
       
-      // Refresh employees list
-      fetchEmployees();
-    } catch (error) {
-      console.error('Error creating employee:', error);
-      alert('Error creating employee: ' + error.message);
-    }
-  };
-
-  const deleteEmployee = async (id) => {
-    if (!confirm('Are you sure you want to delete this employee?')) return;
-    
-    await supabase.from('profiles').delete().eq('id', id);
-  };
-
-  const updateEmployee = async (id, updates) => {
-    // SECURITY: Only admins can update other employees
-    if (!currentUser || currentUser.role !== 'admin') {
-      alert('Only admins can update employee profiles');
-      return;
-    }
-    
-    // SECURITY: Verify admin is logged in
-    const savedUserId = localStorage.getItem('currentUserId');
-    if (!savedUserId || savedUserId !== currentUser.id) {
-      alert('Session expired. Please login again.');
-      handleLogout();
-      return;
-    }
-    
-    // SECURITY: Admins can update any employee, but verify the update succeeded
-    const { error, data } = await supabase
-      .from('profiles')
-      .update(updates)
-      .eq('id', id)
-      .select();
-    
-    // SECURITY: Verify the update was for the intended employee
-    if (data && data.length > 0 && data[0].id !== id) {
-      console.error('SECURITY ERROR: Update returned wrong profile!');
-      alert('Security error: Update failed');
-      return;
-    }
-    
-    if (error) {
-      alert('Error updating employee: ' + error.message);
-      return;
-    }
-    
-    // Refresh employees list
-    fetchEmployees();
-    
-    // If updating current user, update local state
-    if (currentUser && currentUser.id === id) {
-      setCurrentUser({ ...currentUser, ...updates });
-    }
-    
-    setEditingEmployee(null);
-    alert('Employee updated successfully!');
-  };
-
-  const getTimeRemaining = (busyUntil) => {
-    if (!busyUntil) return null;
-    const now = Date.now();
-    const end = new Date(busyUntil).getTime();
-    const diff = end - now;
-    
-    if (diff <= 0) return 'Expired';
-    
-    const minutes = Math.floor(diff / 60000);
-    const seconds = Math.floor((diff % 60000) / 1000);
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  };
-
-  // Get time remaining in MM:SS or HH:MM format for inline display
-  // If > 59 minutes, show as hours:minutes (e.g., "2:30" for 2h 30m)
-  // If <= 59 minutes, show as minutes:seconds (e.g., "45:30" for 45m 30s)
-  const getTimeRemainingFormatted = (busyUntil) => {
-    if (!busyUntil) return null;
-    const now = Date.now();
-    const end = new Date(busyUntil).getTime();
-    const diff = end - now;
-    
-    if (diff <= 0) return null; // Don't show expired timer inline
-    
-    const totalMinutes = Math.floor(diff / 60000);
-    const seconds = Math.floor((diff % 60000) / 1000);
-    
-    // If more than 59 minutes, show as hours:minutes
-    if (totalMinutes >= 60) {
-      const hours = Math.floor(totalMinutes / 60);
-      const minutes = totalMinutes % 60;
-      return `${hours}:${minutes.toString().padStart(2, '0')}`;
-    } else {
-      // If 59 minutes or less, show as minutes:seconds
-      return `${totalMinutes}:${seconds.toString().padStart(2, '0')}`;
-    }
-  };
-
-  // Timer component
-  const Timer = ({ busyUntil }) => {
-    const [time, setTime] = useState(getTimeRemaining(busyUntil));
-
-    useEffect(() => {
-      const interval = setInterval(() => {
-        setTime(getTimeRemaining(busyUntil));
-      }, 1000);
-      return () => clearInterval(interval);
-    }, [busyUntil]);
-
-    if (!time) return null;
-    
-    // Handle expired state
-    if (time === 'Expired') {
-      return (
-        <div className="flex items-center gap-1.5 text-xs font-semibold text-white/80">
-          <Clock className="w-3.5 h-3.5 opacity-60" />
-          <span className="italic">Time expired</span>
+      {/* TV Alerts - Breaking News Style Toasts */}
+      <TVAlertsContainer alerts={tvAlerts} onDismiss={dismissTvAlert} />
+      
+      <Notification notification={notification} onClose={() => setNotification(null)} />
+      
+      {/* Hidden admin access */}
+      {isAuthenticated && isAdmin && (
+        <div className="fixed top-2 right-2 z-50 opacity-0 hover:opacity-100 transition-opacity">
+          <button
+            onClick={() => navigate('/admin')}
+            className="px-3 py-1.5 bg-[#212121] text-white rounded-lg hover:bg-[#212121]/90 text-xs"
+          >
+            Admin
+          </button>
         </div>
-      );
-    }
-    
-    return (
-      <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-        <Clock className="w-3.5 h-3.5" />
-        <span>{time}</span>
-      </div>
-    );
-  };
+      )}
 
-
-  // Employee Card Component - Modern Design with Full Color Background
-  const EmployeeCard = ({ employee }) => {
-    const isFree = employee.status === 'free';
-    const isImportant = employee.status === 'important';
-    const avatarUrl = employee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(employee.full_name)}&background=4F46E5&color=fff&size=64`;
-    
-    // Real-time timer state for inline display (MM:SS format)
-    const [timerFormatted, setTimerFormatted] = useState(() => {
-      if (!isFree && !isImportant && employee.busy_until) {
-        return getTimeRemainingFormatted(employee.busy_until);
-      }
-      return null;
-    });
-
-    // Update timer every second for accurate countdown
-    useEffect(() => {
-      if (!isFree && !isImportant && employee.busy_until) {
-        const interval = setInterval(() => {
-          const timeRemaining = getTimeRemainingFormatted(employee.busy_until);
-          setTimerFormatted(timeRemaining);
-        }, 1000); // Update every second
-        
-        // Also update immediately
-        setTimerFormatted(getTimeRemainingFormatted(employee.busy_until));
-        
-        return () => clearInterval(interval);
-      } else {
-        setTimerFormatted(null);
-      }
-    }, [employee.busy_until, isFree, isImportant]);
-
-    // Determine status colors
-    const getStatusColors = () => {
-      if (isFree) {
-        return {
-          bg: 'bg-[#166534]',
-          bgGradient: 'bg-gradient-to-br from-[#166534] to-[#15803d]',
-          shadow: 'shadow-lg shadow-[#166534]/40',
-          glow: 'bg-[#166534]',
-          indicator: 'bg-white',
-          badge: 'bg-white/20 backdrop-blur-sm text-white border border-white/30',
-          label: '✓ Available',
-          text: 'text-white'
-        };
-      } else if (isImportant) {
-        return {
-          bg: 'bg-[#f97316]',
-          bgGradient: 'bg-gradient-to-br from-[#f97316] to-[#ea580c]',
-          shadow: 'shadow-lg shadow-[#f97316]/40',
-          glow: 'bg-[#f97316]',
-          indicator: 'bg-white',
-          badge: 'bg-white/20 backdrop-blur-sm text-white border border-white/30',
-          label: '⚠ Important Only',
-          text: 'text-white'
-        };
-      } else {
-        return {
-          bg: 'bg-[#991b1b]',
-          bgGradient: 'bg-gradient-to-br from-[#991b1b] to-[#7f1d1d]',
-          shadow: 'shadow-lg shadow-[#991b1b]/40',
-          glow: 'bg-[#991b1b]',
-          indicator: 'bg-white',
-          badge: 'bg-white/20 backdrop-blur-sm text-white border border-white/30',
-          label: '✕ Busy',
-          text: 'text-white'
-        };
-      }
-    };
-
-    const statusColors = getStatusColors();
-
-    return (
-      <div 
-        className={`
-          group relative overflow-hidden rounded-2xl p-5 transition-all duration-300 transform hover:scale-[1.02] hover:shadow-2xl
-          ${statusColors.bgGradient} ${statusColors.shadow}
-          border-0
-        `}
-      >
-        {/* Decorative gradient overlay */}
-        <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-50"></div>
-        
-        {/* Content */}
-        <div className="relative flex items-center gap-3">
-          {/* Avatar with glow effect */}
-          <div className={`relative flex-shrink-0 ${isFree ? 'animate-pulse-slow' : ''}`}>
-            <div className={`absolute inset-0 rounded-full ${statusColors.glow} blur-xl opacity-60`}></div>
-            <img 
-              src={avatarUrl} 
-              alt={employee.full_name}
-              className="relative w-16 h-16 rounded-full border-2 border-white/50 shadow-xl"
-            />
-            {/* Status indicator */}
-            <div className={`absolute bottom-0 right-0 w-5 h-5 rounded-full border-2 border-white ${statusColors.indicator} shadow-lg`}>
-              {isFree && <div className="w-full h-full rounded-full bg-white animate-ping opacity-75"></div>}
-              {isImportant && <div className="w-full h-full rounded-full bg-white animate-pulse opacity-75"></div>}
+      <div className="max-w-7xl mx-auto relative z-10">
+        {/* Header */}
+        <div className="mb-12">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+            {/* Logo */}
+            <div className="bg-white rounded-xl p-2 shadow-sm h-20 flex items-center">
+              <img src="/Rime_logo.jpeg" alt="Rime Logo" className="h-10 w-auto object-contain" />
             </div>
-          </div>
-
-          {/* Name and Badge with Timer */}
-          <div className="flex-1 min-w-0">
-            <h3 className={`text-lg font-bold mb-2 truncate ${statusColors.text}`}>
-              {employee.full_name}
-            </h3>
-            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold ${statusColors.badge} shadow-sm whitespace-nowrap`}>
-              <span>{statusColors.label}</span>
-              {!isFree && !isImportant && timerFormatted && (() => {
-                const now = Date.now();
-                const end = new Date(employee.busy_until).getTime();
-                const diff = end - now;
-                const totalMinutes = Math.floor(diff / 60000);
-                const isHours = totalMinutes >= 60;
-                return (
-                  <>
-                    <span className="text-white/70">-</span>
-                    <span className="text-white/90 font-mono">{timerFormatted}</span>
-                    <span className="text-white/80 text-[10px] ml-0.5">{isHours ? 'h' : 'm'}</span>
-                  </>
-                );
-              })()}
-            </div>
-          </div>
-        </div>
-
-        {/* Corner accent */}
-        <div className="absolute top-0 right-0 w-20 h-20 bg-white/10 rounded-bl-full"></div>
-      </div>
-    );
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-image-static flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <div className="text-[#212121] text-xl font-semibold">Loading...</div>
-        </div>
-      </div>
-    );
-  }
-
-  // Notification Component - Big and Prominent
-  const Notification = ({ notification, onClose }) => {
-    if (!notification) return null;
-    
-    return (
-      <div className="fixed top-8 left-1/2 transform -translate-x-1/2 z-[100] animate-in slide-in-from-top-5 duration-500">
-        <div className={`
-          px-10 py-8 rounded-3xl shadow-2xl backdrop-blur-xl border-3
-          ${notification.type === 'status' 
-            ? notification.status === 'free'
-              ? 'bg-[#166534] border-[#166534] shadow-[#166534]/50'
-              : notification.status === 'important'
-              ? 'bg-[#f97316] border-[#f97316] shadow-[#f97316]/50'
-              : 'bg-[#991b1b] border-[#991b1b] shadow-[#991b1b]/50'
-            : 'bg-white border border-gray-200'
-          }
-          ${notification.type === 'note' ? 'text-[#212121]' : 'text-white'} max-w-3xl w-full mx-4
-        `}>
-          <div className="flex items-start justify-between gap-6">
-            <div className="flex-1">
-              <div className="flex items-center gap-4 mb-3">
-                <span className="text-5xl">{notification.emoji}</span>
-                <h3 className={`text-3xl font-extrabold ${notification.type === 'note' ? 'text-[#212121]' : 'text-white'}`}>{notification.name}</h3>
-              </div>
-              {notification.type === 'note' ? (
-                <div className="mt-4">
-                  <p className="text-2xl font-bold mb-3 text-[#212121]">says:</p>
-                  <div className="p-4 bg-gray-100 rounded-xl border-2 border-gray-300">
-                    <p className="text-2xl font-semibold italic leading-relaxed text-[#212121]">"{notification.note}"</p>
+            
+            {/* Prayer & Time Widget */}
+            {prayerDateInfo && prayerTimes && nextPrayer && (
+              <div className="flex gap-2 items-center">
+                {/* Time Widget */}
+                <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl border-2 border-gray-700 shadow-lg p-3 w-[200px] h-20 flex flex-col justify-between">
+                  <div className="text-center">
+                    <div className="text-4xl font-bold text-[#00ff41] font-mono tracking-wider drop-shadow-[0_0_10px_rgba(0,255,65,0.9)] leading-none">
+                      {currentTime}
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <span className="text-[10px] font-semibold text-gray-300 uppercase tracking-wider">
+                      {prayerDateInfo.gregorian?.weekday?.en}
+                    </span>
+                    <span className="text-[10px] text-gray-300 mx-1">•</span>
+                    <span className="text-[10px] font-bold text-gray-200">
+                      {prayerDateInfo.gregorian?.day} {prayerDateInfo.gregorian?.month?.en} {prayerDateInfo.gregorian?.year}
+                    </span>
                   </div>
                 </div>
-              ) : (
-                <p className="text-2xl font-bold text-white">{notification.message}</p>
-              )}
-            </div>
-            <button
-              onClick={onClose}
-              className={`${notification.type === 'note' ? 'text-[#212121]/70 hover:text-[#212121]' : 'text-white/90 hover:text-white'} transition-colors flex-shrink-0`}
-            >
-              <X className="w-7 h-7" />
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // Public View - Enhanced Modern Design
-  // This is a shared/public display - no login indicators shown
-  if (view === 'public') {
-    return (
-      <div className="min-h-screen bg-gradient-image-static p-4 md:p-8">
-        {/* Adhan Audio Element */}
-        <audio 
-          ref={adhanAudioRef} 
-          src={adhanAudio} 
-          preload="auto"
-        />
-        
-        {/* Notification */}
-        {notification && (
-          <Notification 
-            notification={notification} 
-            onClose={() => setNotification(null)}
-          />
-        )}
-        {/* Hidden admin access - only visible if admin is logged in and wants to access admin panel */}
-        {/* This is intentionally hidden to keep the public dashboard clean for shared screens */}
-        {currentUser && currentUser.role === 'admin' && (
-          <div className="fixed top-2 right-2 z-50 opacity-0 hover:opacity-100 transition-opacity">
-            <button
-              onClick={() => setView('admin')}
-              className="px-3 py-1.5 bg-[#212121] text-white rounded-lg hover:bg-[#212121]/90 text-xs border border-[#212121]"
-              title="Admin Access"
-            >
-              Admin
-            </button>
-          </div>
-        )}
-
-        <div className="max-w-7xl mx-auto relative z-10">
-          {/* Header - Organized Layout */}
-          <div className="mb-12">
-            {/* Top Row: Logo | 4-Area Prayer/Date Widget | Settings */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-              {/* Logo - Left */}
-              <div className="bg-white rounded-xl p-2 shadow-sm h-20 flex items-center">
-                <img 
-                  src="/Rime_logo.jpeg" 
-                  alt="Rime Logo" 
-                  className="h-10 w-auto object-contain"
-                />
-              </div>
-              
-              {/* Prayer & Date/Time Widget - Center */}
-              {prayerDateInfo && prayerTimes && nextPrayer && (
-                <div className="flex gap-2 items-center">
-                  {/* Area 1: Time with Digital Font - Same size as prayer */}
-                  {/* Area 1: Time Widget - Consistent Design */}
-                  <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl border-2 border-gray-700 shadow-lg p-3 w-[200px] h-20 flex flex-col justify-between">
-                    {/* Large Time Display */}
-                    <div className="text-center">
-                      <div className="text-4xl font-bold text-[#00ff41] font-mono tracking-wider drop-shadow-[0_0_10px_rgba(0,255,65,0.9)] leading-none">
-                        {currentTime}
-                      </div>
-                    </div>
-                    
-                    {/* Date and Day - One Line */}
-                    <div className="text-center">
-                      <span className="text-[10px] font-semibold text-gray-300 uppercase tracking-wider">
-                        {prayerDateInfo.gregorian?.weekday?.en}
-                      </span>
-                      <span className="text-[10px] text-gray-300 mx-1">•</span>
-                      <span className="text-[10px] font-bold text-gray-200">
-                        {prayerDateInfo.gregorian?.day} {prayerDateInfo.gregorian?.month?.en} {prayerDateInfo.gregorian?.year}
-                      </span>
-                    </div>
+                
+                {/* Prayer Widget */}
+                <div className="bg-gradient-to-br from-[#166534] to-[#15803d] rounded-xl border-2 border-[#166534] shadow-lg p-3 w-[200px] h-20 flex flex-col justify-center">
+                  <div className="flex items-center justify-center gap-2 text-white mb-1">
+                    {nextPrayer.name === 'Fajr' || nextPrayer.name === 'Maghrib' || nextPrayer.name === 'Isha' ? (
+                      <Moon className="w-5 h-5 flex-shrink-0" />
+                    ) : (
+                      <Sun className="w-5 h-5 flex-shrink-0" />
+                    )}
+                    <span className="text-lg font-bold">{nextPrayer.name}</span>
+                    <span className="text-lg font-mono font-bold">{nextPrayer.time}</span>
                   </div>
-                  
-                  {/* Area 2: Next Prayer Widget - Two Lines, Bigger Font */}
-                  <div className="bg-gradient-to-br from-[#166534] to-[#15803d] rounded-xl border-2 border-[#166534] shadow-lg p-3 w-[200px] h-20 flex flex-col justify-center">
-                    {/* Line 1: Icon + Prayer Name + Time */}
-                    <div className="flex items-center justify-center gap-2 text-white mb-1">
-                      {nextPrayer.name === 'Fajr' ? (
-                        <Moon className="w-5 h-5 flex-shrink-0" />
-                      ) : nextPrayer.name === 'Maghrib' || nextPrayer.name === 'Isha' ? (
-                        <Moon className="w-5 h-5 flex-shrink-0" />
-                      ) : (
-                        <Sun className="w-5 h-5 flex-shrink-0" />
-                      )}
-                      <span className="text-lg font-bold">{nextPrayer.name}</span>
-                      <span className="text-lg font-mono font-bold">{nextPrayer.time}</span>
-                    </div>
-                    {/* Line 2: Countdown in one line */}
-                    <div className="text-center text-sm font-mono font-semibold text-white/90">
-                      ({countdown || 'Loading...'})
-                    </div>
+                  <div className="text-center text-sm font-mono font-semibold text-white/90">
+                    ({countdown || 'Loading...'})
                   </div>
                 </div>
-              )}
-              
-              {/* Settings - Right */}
-              <button
-                onClick={() => {
-                  // If user is logged in, go to their control panel, otherwise go to login
-                  if (currentUser) {
-                    if (currentUser.role === 'admin') {
-                      setView('admin');
-                    } else {
-                      setView('employee');
-                    }
-                  } else {
-                    setView('login');
-                  }
-                }}
-                className="px-3 py-1.5 bg-[#212121] text-white rounded-lg hover:bg-[#212121]/90 flex items-center justify-center gap-1.5 shadow-sm transition-all duration-300 text-sm"
-              >
-                <User className="w-5 h-5" />
-                <span className="hidden sm:inline">Settings</span>
-                <span className="sm:hidden">Login</span>
-              </button>
-            </div>
+              </div>
+            )}
+            
+            {/* Settings Button - Use session check (not isAuthenticated) to handle profile loading state */}
+            <button
+              onClick={() => {
+                if (session) {
+                  navigate(isAdmin ? '/admin' : '/dashboard');
+                } else {
+                  navigate('/login');
+                }
+              }}
+              className="px-4 py-2 bg-[#212121] text-white rounded-lg hover:bg-[#212121]/90 flex items-center justify-center gap-2 shadow-sm transition-all text-sm font-medium"
+            >
+              <User className="w-4 h-4" />
+              <span className="hidden sm:inline">{session ? 'Dashboard' : 'Settings'}</span>
+              <span className="sm:hidden">{session ? 'Panel' : 'Login'}</span>
+            </button>
+          </div>
 
-            {/* News Bar: Scrolling Notes Ticker - Using requestAnimationFrame for smooth animation */}
-            <NewsTicker employees={employees} />
+          <NewsTicker employees={employees} recentlyUpdated={recentlyUpdated} />
+        </div>
+        
+        {/* Employee Cards Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+          {dataLoading ? (
+            <div className="col-span-full flex justify-center py-20">
+              <ContentSpinner message="Loading employees..." />
+            </div>
+          ) : employees.length === 0 ? (
+            <div className="col-span-full text-center py-20">
+              <div className="text-[#212121] text-xl">No employees found</div>
+            </div>
+          ) : (
+            employees
+              .sort((a, b) => {
+                const statusOrder = { 'important': 0, 'free': 1, 'busy': 2 };
+                const aOrder = statusOrder[a.status] ?? 3;
+                const bOrder = statusOrder[b.status] ?? 3;
+                if (aOrder !== bOrder) return aOrder - bOrder;
+                return a.full_name.localeCompare(b.full_name);
+              })
+              .map(emp => <EmployeeCard key={emp.id} employee={emp} onStatusExpired={handleStatusExpired} />)
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  // Login Page
+  const LoginPage = () => (
+    <div className="min-h-screen bg-gradient-image-static flex items-center justify-center p-4 relative overflow-hidden">
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000"></div>
+      </div>
+      
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8 w-full max-w-md relative z-10">
+        <div className="text-center mb-8">
+          <div className="w-20 h-20 bg-[#212121] rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg">
+            <User className="w-10 h-10 text-white" />
+          </div>
+          <h2 className="text-3xl font-bold text-[#212121] mb-2">Employee Login</h2>
+          <p className="text-[#212121]/70 text-sm">Sign in with your company Google account</p>
+        </div>
+        
+        <div className="space-y-5">
+          {authError && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-center">
+              <p className="text-red-600 font-medium">{authError}</p>
+              <p className="text-red-500 text-sm mt-1">Please use your @getrime.com email</p>
+            </div>
+          )}
+          
+          <button
+            onClick={signInWithGoogle}
+            disabled={signingIn}
+            className="w-full bg-white border-2 border-gray-200 text-[#212121] py-3 px-4 rounded-xl hover:bg-gray-50 hover:border-gray-300 font-semibold shadow-sm hover:shadow-md transition-all duration-300 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {signingIn ? (
+              <>
+                <div className="w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                <span>Signing in...</span>
+              </>
+            ) : (
+              <>
+                <GoogleIcon />
+                <span>Sign in with Google</span>
+              </>
+            )}
+          </button>
+          
+          <div className="relative my-6">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-200"></div>
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="px-4 bg-white text-gray-500">Company accounts only</span>
+            </div>
           </div>
           
-          {/* Employee Cards Grid - More compact */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-            {employees.length === 0 ? (
-              <div className="col-span-full text-center py-20">
-                <div className="text-[#212121] text-xl">No employees found</div>
-              </div>
-            ) : (
-              employees
-                .sort((a, b) => {
-                  // Sort: Important first, then Free, then Busy
-                  const statusOrder = { 'important': 0, 'free': 1, 'busy': 2 };
-                  const aOrder = statusOrder[a.status] ?? 3;
-                  const bOrder = statusOrder[b.status] ?? 3;
-                  if (aOrder !== bOrder) return aOrder - bOrder;
-                  return a.full_name.localeCompare(b.full_name);
-                })
-                .map(emp => (
-                  <EmployeeCard key={emp.id} employee={emp} />
-                ))
-            )}
-          </div>
+          <p className="text-center text-sm text-gray-500">
+            Only <span className="font-semibold text-[#212121]">@getrime.com</span> email addresses are allowed
+          </p>
+          
+          <button
+            onClick={() => navigate('/')}
+            className="w-full bg-gray-50 border border-gray-200 text-[#212121] py-3 rounded-xl hover:bg-gray-100 font-semibold transition-all"
+          >
+            Back to Dashboard
+          </button>
         </div>
       </div>
-    );
-  }
+    </div>
+  );
 
-  // Login View - Enhanced Design
-  if (view === 'login') {
-    // If user is already logged in, show redirecting message (useEffect will handle redirect)
-    if (currentUser && !loading) {
-      return (
-        <div className="min-h-screen bg-gradient-image-static flex items-center justify-center">
-          <div className="text-center">
-            <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <div className="text-[#212121] text-xl font-semibold">Redirecting to your control panel...</div>
-          </div>
-        </div>
-      );
-    }
-    
-    return (
-      <div className="min-h-screen bg-gradient-image-static flex items-center justify-center p-4 relative overflow-hidden">
-        {/* Animated background */}
-        <div className="absolute inset-0 overflow-hidden">
-          <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
-          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000"></div>
-        </div>
-        
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8 w-full max-w-md relative z-10">
-          <div className="text-center mb-8">
-            <div className="w-20 h-20 bg-[#212121] rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg">
-              <User className="w-10 h-10 text-white" />
-            </div>
-            <h2 className="text-3xl font-bold text-[#212121] mb-2">Settings</h2>
-            <p className="text-[#212121]/70 text-sm">Enter your credentials to continue</p>
-          </div>
-          <div className="space-y-5">
-            <div>
-              <label className="block text-sm font-medium text-[#212121] mb-2">Username</label>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                placeholder="Enter your username"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-[#212121] mb-2">Password</label>
-              <div className="relative">
-                <input
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                  className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all pr-12"
-                  placeholder="Enter your password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#212121] hover:text-[#212121]/80 transition-colors"
-                >
-                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-            </div>
-            <button
-              onClick={handleLogin}
-              className="w-full bg-[#212121] text-white py-3 rounded-xl hover:bg-[#212121]/90 font-semibold shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
-            >
-              Sign In
-            </button>
-            <button
-              onClick={() => setView('public')}
-              className="w-full bg-white border border-gray-300 text-[#212121] py-3 rounded-xl hover:bg-gray-50 font-semibold transition-all"
-            >
-              Back to Dashboard
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Employee Control Panel - Enhanced Design
-  if (view === 'employee') {
-    // Debug: Log current state
-    console.log('🔍 Employee view triggered - currentUser:', currentUser ? currentUser.full_name : 'null', 'view:', view, 'loading:', loading);
-    
-    // If still loading, show loading state
-    if (loading) {
-      return (
-        <div className="min-h-screen bg-gradient-image-static flex items-center justify-center">
-          <div className="text-center">
-            <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <div className="text-[#212121] text-xl font-semibold">Loading Control Panel...</div>
-          </div>
-        </div>
-      );
-    }
-    
-    // If no current user, redirect to login
-    if (!currentUser) {
-      return (
-        <div className="min-h-screen bg-gradient-image-static flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8 max-w-md w-full text-center">
-            <h2 className="text-2xl font-bold text-[#212121] mb-4">Please Login</h2>
-            <p className="text-[#212121]/70 mb-6">You need to be logged in to access the control panel.</p>
-            <button
-              onClick={() => setView('login')}
-              className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 font-semibold transition-all"
-            >
-              Go to Login
-            </button>
-          </div>
-        </div>
-      );
-    }
-    
-    // Render the control panel
+  // Employee Dashboard
+  const EmployeeDashboard = () => {
+    // Note: useEffect removed - noteText is now synced at App level
     return (
       <div className="min-h-screen bg-gradient-image-static p-4 md:p-8">
-        {/* Animated background */}
         <div className="fixed inset-0 overflow-hidden pointer-events-none">
           <div className="absolute -top-40 -right-40 w-80 h-80 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
           <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000"></div>
         </div>
 
+        <Notification notification={notification} onClose={() => setNotification(null)} />
+
         <div className="max-w-4xl mx-auto relative z-10">
-          {/* Header with session timer */}
+          {/* Header */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
             <div>
-              <h1 className="text-4xl md:text-5xl font-extrabold text-[#212121] mb-2">
-                Control Panel
-              </h1>
-              {sessionTimeLeft && (
-                <p className="text-[#212121]/70 text-sm flex items-center gap-2">
-                  <Clock className="w-4 h-4" />
-                  Session expires in: <span className="font-bold text-[#212121]">{sessionTimeLeft}</span>
-                </p>
-              )}
+              <h1 className="text-4xl md:text-5xl font-extrabold text-[#212121] mb-2">Control Panel</h1>
+              <p className="text-[#212121]/70 text-sm">
+                Signed in as <span className="font-semibold">{currentUser?.email}</span>
+              </p>
             </div>
-            <div className="flex gap-2">
-              {currentUser?.role === 'admin' && (
+            <div className="flex flex-wrap gap-2">
+              {isAdmin && (
                 <button
-                  onClick={() => setView('admin')}
-                  className="px-4 py-2 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 flex items-center gap-2 shadow-sm transition-all"
+                  onClick={() => navigate('/admin')}
+                  className="px-4 py-2 bg-[#212121] text-white rounded-lg hover:bg-[#212121]/90 shadow-sm transition-all text-sm font-medium"
                 >
                   Admin Panel
                 </button>
               )}
               <button
-                onClick={handleLogout}
-                className="px-4 py-2 bg-[#991b1b] text-white rounded-xl hover:bg-[#991b1b]/90 flex items-center gap-2 shadow-lg transition-all"
-              >
-                <LogOut className="w-4 h-4" />
-                Logout
-              </button>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-3xl shadow-2xl border border-gray-200 p-6 md:p-8">
-            {/* User Info Card */}
-            <div className="bg-white rounded-2xl p-6 mb-6 border border-gray-200 shadow-sm">
-              <div className="flex flex-col md:flex-row items-center md:items-start justify-between gap-4">
-                <div className="flex items-center gap-4">
-                  <div className="relative">
-                    <div className={`absolute inset-0 rounded-full ${
-                      currentUser.status === 'free' ? 'bg-[#166534]' : 
-                      currentUser.status === 'important' ? 'bg-[#f97316]' : 
-                      'bg-[#991b1b]'
-                    } blur-xl opacity-50`}></div>
-                    <img 
-                      src={currentUser.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.full_name)}`}
-                      alt={currentUser.full_name}
-                      className="relative w-24 h-24 rounded-full border-4 border-white shadow-2xl"
-                    />
-                    <div className={`absolute bottom-0 right-0 w-6 h-6 rounded-full border-4 border-white ${
-                      currentUser.status === 'free' ? 'bg-[#166534]' : 
-                      currentUser.status === 'important' ? 'bg-[#f97316]' : 
-                      'bg-[#991b1b]'
-                    }`}>
-                      {currentUser.status === 'free' && <div className="w-full h-full rounded-full bg-[#166534] animate-ping opacity-75"></div>}
-                      {currentUser.status === 'important' && <div className="w-full h-full rounded-full bg-[#f97316] animate-pulse opacity-75"></div>}
-                    </div>
-                  </div>
-                  <div>
-                    <h2 className="text-3xl font-bold text-[#212121] mb-1">{currentUser.full_name}</h2>
-                    <div className="flex items-center gap-2">
-                      <div className={`px-3 py-1 rounded-full text-sm font-bold text-white ${
-                        currentUser.status === 'free' ? 'bg-[#166534]' : 
-                        currentUser.status === 'important' ? 'bg-[#f97316]' : 
-                        'bg-[#991b1b]'
-                      }`}>
-                        {currentUser.status === 'free' ? '✓ Available' : 
-                         currentUser.status === 'important' ? '⚠ Important Only' : 
-                         '✕ Busy'}
-                      </div>
-                      {currentUser.role === 'admin' && (
-                        <div className="px-3 py-1 rounded-full text-sm font-bold bg-[#212121] text-white border border-[#212121]">
-                          Admin
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setShowProfileSettings(!showProfileSettings)}
-                  className="px-5 py-2.5 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 flex items-center gap-2 shadow-sm transition-all"
-                >
-                  <Settings className="w-4 h-4" />
-                  {showProfileSettings ? 'Hide Settings' : 'Edit Profile'}
-                </button>
-              </div>
-            </div>
-
-            {/* Profile Settings Section */}
-            {showProfileSettings && (
-              <div className="mb-6 p-6 bg-white rounded-2xl border border-gray-200 shadow-sm">
-                <h3 className="text-2xl font-bold text-[#212121] mb-6 flex items-center gap-2">
-                  <Settings className="w-6 h-6" />
-                  Profile Settings
-                </h3>
-                
-                {/* Avatar Upload */}
-                <div className="mb-6">
-                    <label className="block text-sm font-medium text-[#212121] mb-3">Profile Picture</label>
-                  <div className="flex items-center gap-4">
-                    <div className="relative">
-                      <div className="absolute inset-0 bg-indigo-400 rounded-full blur-xl opacity-50"></div>
-                      <img 
-                        src={avatarPreview || currentUser.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.full_name)}`}
-                        alt="Avatar preview"
-                        className="relative w-28 h-28 rounded-full border-4 border-white shadow-2xl"
-                      />
-                      {uploadingAvatar && (
-                        <div className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center backdrop-blur-sm">
-                          <div className="text-[#212121] text-sm font-semibold">Uploading...</div>
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      <label className="cursor-pointer inline-flex items-center px-5 py-2.5 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-lg transition-all">
-                        <Upload className="w-4 h-4 mr-2" />
-                        {avatarFile ? 'Change Image' : 'Upload Image'}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={handleAvatarChange}
-                          className="hidden"
-                        />
-                      </label>
-                      {avatarFile && (
-                        <button
-                          onClick={() => {
-                            setAvatarFile(null);
-                            setAvatarPreview(null);
-                          }}
-                          className="ml-2 px-3 py-1.5 text-sm bg-[#991b1b] text-white hover:bg-[#991b1b]/90 rounded-lg border border-[#991b1b] transition-all"
-                        >
-                          <X className="w-4 h-4 inline mr-1" /> Cancel
-                        </button>
-                      )}
-                      <p className="text-xs text-[#212121]/60 mt-2">Max 5MB, JPG/PNG</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Name Edit */}
-                <div className="mb-6">
-                  <label className="block text-sm font-medium text-[#212121] mb-2">Full Name</label>
-                  <input
-                    type="text"
-                    value={editingName}
-                    onChange={(e) => setEditingName(e.target.value)}
-                    className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                    placeholder="Enter your full name"
-                  />
-                </div>
-
-                {/* Save Profile Button */}
-                <div className="mb-6">
-                  <button
-                    onClick={updateProfile}
-                    disabled={savingProfile || uploadingAvatar}
-                    className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 flex items-center gap-2 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Save className="w-5 h-5" />
-                    {savingProfile ? 'Saving...' : 'Save Profile Changes'}
-                  </button>
-                </div>
-
-                {/* Password Change Section */}
-                <div className="border-t border-gray-200 pt-6">
-                  <h4 className="text-xl font-bold text-[#212121] mb-4">Change Password</h4>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-[#212121] mb-2">Current Password</label>
-                      <input
-                        type="password"
-                        value={currentPassword}
-                        onChange={(e) => setCurrentPassword(e.target.value)}
-                        className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                        placeholder="Enter current password"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-[#212121] mb-2">New Password</label>
-                      <input
-                        type="password"
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
-                        className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                        placeholder="Enter new password (min 6 characters)"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-[#212121] mb-2">Confirm New Password</label>
-                      <input
-                        type="password"
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                        placeholder="Confirm new password"
-                      />
-                    </div>
-                    <button
-                      onClick={changePassword}
-                      className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-sm transition-all"
-                    >
-                      Change Password
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Note Management Section - Independent of Status */}
-            <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm mb-6">
-              <h3 className="text-xl font-bold text-[#212121] mb-4">Your Status Note</h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-[#212121] mb-2">
-                    Note (optional - visible to everyone)
-                  </label>
-                  <input
-                    type="text"
-                    value={noteText}
-                    onChange={(e) => setNoteText(e.target.value)}
-                    placeholder="e.g., Working on project, Available for urgent matters..."
-                    className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                  />
-                </div>
-                <div className="flex gap-3">
-                  <button
-                    onClick={updateNote}
-                    className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-sm transition-all flex items-center gap-2"
-                  >
-                    <Save className="w-4 h-4" />
-                    Update Note
-                  </button>
-                  {(currentUser?.status_note || noteText.trim()) && (
-                    <button
-                      onClick={removeNote}
-                      className="px-6 py-3 bg-[#991b1b] text-white rounded-xl hover:bg-[#991b1b]/90 shadow-sm transition-all flex items-center gap-2"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      Remove Note
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Status Control Section */}
-            <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
-              <h3 className="text-xl font-bold text-[#212121] mb-4">Update Your Status</h3>
-              <div className="space-y-4">
-                {/* Duration - show when user is busy (timer only for busy status) */}
-                {currentUser?.status === 'busy' && (
-                  <div>
-                    <label className="block text-sm font-medium text-[#212121] mb-2">Busy Duration</label>
-                    <div className="space-y-3">
-                      <div className="flex gap-2">
-                        {[15, 30, 60, 120].map(duration => (
-                          <button
-                            key={duration}
-                            onClick={() => {
-                              setBusyDuration(duration);
-                              setUseCustomDuration(false);
-                              setCustomDuration('');
-                              // Auto-update if already busy (not for important)
-                              if (currentUser?.status === 'busy') {
-                                updateStatus('busy', duration);
-                              }
-                            }}
-                              className={`flex-1 py-3 rounded-xl font-bold transition-all ${
-                              !useCustomDuration && busyDuration === duration
-                                ? 'bg-[#212121] text-white shadow-lg scale-105'
-                                : 'bg-white text-[#212121] hover:bg-gray-50 border border-gray-300'
-                            }`}
-                          >
-                            {duration}m
-                          </button>
-                        ))}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => {
-                            const newUseCustom = !useCustomDuration;
-                            setUseCustomDuration(newUseCustom);
-                            if (newUseCustom && currentUser?.status === 'busy' && customDuration) {
-                              const customMin = parseInt(customDuration);
-                              if (!isNaN(customMin) && customMin > 0) {
-                                if (customMin > MAX_BUSY_DURATION_MINUTES) {
-                                  alert(`Maximum busy duration is ${MAX_BUSY_DURATION_MINUTES} minutes (24 hours).`);
-                                  setCustomDuration(MAX_BUSY_DURATION_MINUTES.toString());
-                                  updateStatus('busy', MAX_BUSY_DURATION_MINUTES);
-                                } else {
-                                  updateStatus('busy', customMin);
-                                }
-                              }
-                            }
-                          }}
-                          className={`px-4 py-2 rounded-xl font-medium transition-all ${
-                            useCustomDuration
-                              ? 'bg-[#212121] text-white'
-                              : 'bg-white text-[#212121] hover:bg-gray-50 border border-gray-300'
-                          }`}
-                        >
-                          Custom
-                        </button>
-                        {useCustomDuration && (
-                          <div className="flex-1 flex flex-col gap-2">
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="number"
-                                min="1"
-                                max={MAX_BUSY_DURATION_MINUTES}
-                                value={customDuration}
-                                onChange={(e) => {
-                                  let newValue = e.target.value;
-                                  
-                                  // Only allow digits
-                                  if (newValue && !/^\d+$/.test(newValue)) {
-                                    return;
-                                  }
-                                  
-                                  // Prevent values over the maximum - cap it at 1440
-                                  if (newValue && parseInt(newValue) > MAX_BUSY_DURATION_MINUTES) {
-                                    newValue = MAX_BUSY_DURATION_MINUTES.toString();
-                                    setDurationWarning(`Maximum duration is ${MAX_BUSY_DURATION_MINUTES} minutes (24 hours). Value capped.`);
-                                    // Clear warning after 3 seconds
-                                    setTimeout(() => setDurationWarning(''), 3000);
-                                  } else {
-                                    setDurationWarning('');
-                                  }
-                                  
-                                  setCustomDuration(newValue);
-                                  
-                                  // Clear existing timeout
-                                  if (customDurationTimeoutRef.current) {
-                                    clearTimeout(customDurationTimeoutRef.current);
-                                  }
-                                  
-                                  // Auto-update if already busy and valid input (with debounce)
-                                  if (currentUser?.status === 'busy' && newValue) {
-                                    const customMin = parseInt(newValue);
-                                    if (!isNaN(customMin) && customMin > 0 && customMin <= MAX_BUSY_DURATION_MINUTES) {
-                                      // Debounce the update - wait 1 second after user stops typing
-                                      customDurationTimeoutRef.current = setTimeout(() => {
-                                        updateStatus('busy', customMin);
-                                      }, 1000);
-                                    }
-                                  }
-                                }}
-                                onKeyDown={(e) => {
-                                  // Prevent typing if the value would exceed max
-                                  if (e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Tab') {
-                                    const currentValue = parseInt(customDuration) || 0;
-                                    const newDigit = parseInt(e.key);
-                                    if (!isNaN(newDigit)) {
-                                      const potentialValue = currentValue * 10 + newDigit;
-                                      if (potentialValue > MAX_BUSY_DURATION_MINUTES) {
-                                        e.preventDefault();
-                                        setDurationWarning(`Maximum duration is ${MAX_BUSY_DURATION_MINUTES} minutes (24 hours).`);
-                                        setTimeout(() => setDurationWarning(''), 3000);
-                                      }
-                                    }
-                                  }
-                                }}
-                                onBlur={(e) => {
-                                  // Clear timeout and update immediately when user leaves the field
-                                  if (customDurationTimeoutRef.current) {
-                                    clearTimeout(customDurationTimeoutRef.current);
-                                  }
-                                  
-                                  // Clear warning
-                                  setDurationWarning('');
-                                  
-                                  if (currentUser?.status === 'busy' && e.target.value) {
-                                    let customMin = parseInt(e.target.value);
-                                    if (!isNaN(customMin) && customMin > 0) {
-                                      // Cap at maximum if exceeded
-                                      if (customMin > MAX_BUSY_DURATION_MINUTES) {
-                                        customMin = MAX_BUSY_DURATION_MINUTES;
-                                        setCustomDuration(MAX_BUSY_DURATION_MINUTES.toString());
-                                      }
-                                      updateStatus('busy', customMin);
-                                    }
-                                  }
-                                }}
-                                placeholder={`Minutes (max ${MAX_BUSY_DURATION_MINUTES})`}
-                                className={`flex-1 px-4 py-3 bg-white border rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all ${
-                                  durationWarning ? 'border-orange-400' : 'border-gray-300'
-                                }`}
-                              />
-                              <span className="text-[#212121]/70 text-sm whitespace-nowrap">minutes (max 24h)</span>
-                            </div>
-                            {durationWarning && (
-                              <div className="text-xs text-orange-600 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
-                                ⚠️ {durationWarning}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-3 gap-3 pt-4">
-                  <button
-                    onClick={() => updateStatus('free')}
-                    className="py-4 bg-[#166534] text-white rounded-xl hover:bg-[#166534]/90 font-bold text-lg shadow-sm transition-all"
-                  >
-                    ✓ Free
-                  </button>
-                  <button
-                    onClick={() => updateStatus('busy')}
-                    className="py-4 bg-[#991b1b] text-white rounded-xl hover:bg-[#991b1b]/90 font-bold text-lg shadow-lg hover:shadow-xl transition-all transform hover:scale-105"
-                  >
-                    ✕ Busy
-                  </button>
-                  <button
-                    onClick={() => updateStatus('important')}
-                    className="py-4 bg-[#f97316] text-white rounded-xl hover:bg-[#f97316]/90 font-bold text-lg shadow-sm transition-all"
-                  >
-                    ⚠ Important Only
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex gap-3 mt-6">
-            {currentUser?.role === 'admin' && (
-              <button
-                onClick={() => setView('admin')}
-                className="flex-1 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-lg transition-all"
-              >
-                Admin Panel
-              </button>
-            )}
-            <button
-              onClick={() => setView('public')}
-              className="flex-1 py-3 bg-white border border-gray-300 text-[#212121] rounded-xl hover:bg-gray-50 transition-all"
-            >
-              View Public Dashboard
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Admin Panel - Enhanced Design
-  if (view === 'admin' && currentUser?.role === 'admin') {
-    return (
-      <div className="min-h-screen bg-gradient-image-static p-4 md:p-8">
-        {/* Animated background */}
-        <div className="fixed inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
-          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000"></div>
-        </div>
-
-        <div className="max-w-7xl mx-auto relative z-10">
-          {/* Header */}
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-            <div>
-              <h1 className="text-4xl md:text-5xl font-extrabold text-[#212121] mb-2">
-                Admin Panel
-              </h1>
-              {sessionTimeLeft && (
-                <p className="text-[#212121]/70 text-sm flex items-center gap-2">
-                  <Clock className="w-4 h-4" />
-                  Session: <span className="font-bold text-[#212121]">{sessionTimeLeft}</span>
-                </p>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setView('employee')}
-                className="px-5 py-2.5 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-sm transition-all"
-              >
-                My Control Panel
-              </button>
-              <button
-                onClick={() => setView('public')}
-                className="px-5 py-2.5 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-lg transition-all"
+                onClick={() => navigate('/')}
+                className="px-4 py-2 bg-[#212121] text-white rounded-lg hover:bg-[#212121]/90 shadow-sm transition-all text-sm font-medium"
               >
                 View Dashboard
               </button>
               <button
                 onClick={handleLogout}
-                className="px-5 py-2.5 bg-[#991b1b] text-white rounded-xl hover:bg-[#991b1b]/90 flex items-center gap-2 shadow-lg transition-all"
+                className="px-4 py-2 bg-[#991b1b] text-white rounded-lg hover:bg-[#991b1b]/90 flex items-center gap-2 shadow-sm transition-all text-sm font-medium"
               >
                 <LogOut className="w-4 h-4" />
                 Logout
@@ -2653,288 +1619,659 @@ const App = () => {
             </div>
           </div>
 
-          {/* Main Content */}
-          <div className="bg-white rounded-3xl shadow-2xl border border-gray-200 p-6 md:p-8">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-              <h2 className="text-3xl font-bold text-[#212121]">
-                Manage Employees
-              </h2>
+          {/* Status Card */}
+          <div className="bg-white rounded-3xl shadow-xl border border-gray-200 p-6 md:p-8 mb-6">
+            {/* Profile Header with Inline Edit */}
+            <div className="flex items-center gap-4 mb-6">
+              {/* Avatar with Camera Badge Indicator */}
+              <div className="relative">
+                <img 
+                  src={avatarPreview || currentUser?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser?.full_name || 'User')}`}
+                  alt={currentUser?.full_name}
+                  className="w-20 h-20 rounded-full border-4 border-gray-200 shadow-lg object-cover"
+                />
+                {/* Small camera badge indicator */}
+                <label className="absolute bottom-0 right-0 w-7 h-7 bg-[#212121] rounded-full flex items-center justify-center cursor-pointer hover:bg-[#212121]/80 transition-all shadow-md border-2 border-white">
+                  <Upload className="w-3.5 h-3.5 text-white" />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={async (e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        setAvatarPreview(URL.createObjectURL(file));
+                        const newUrl = await uploadAvatar(file, currentUser.id);
+                        if (newUrl) {
+                          const updates = { avatar_url: newUrl, updated_at: new Date().toISOString() };
+                          await supabase.from('user_profiles').update(updates).eq('id', currentUser.id);
+                          updateProfile(updates);
+                          setEmployees(prev => prev.map(emp => emp.id === currentUser.id ? { ...emp, ...updates } : emp));
+                          showNotification('Avatar updated!', 'success');
+                        }
+                        setAvatarPreview(null);
+                      }
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+              
+              {/* Name with Click-to-Edit (popup style) */}
+              <div className="flex-1">
+                {showProfileSettings ? (
+                  <div className="mb-1">
+                    <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl p-2 shadow-sm">
+                      <input
+                        type="text"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        className="flex-1 text-xl font-bold text-[#212121] bg-transparent px-2 py-1 outline-none"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (editingName && editingName !== currentUser?.full_name) {
+                              const updates = { full_name: editingName, updated_at: new Date().toISOString() };
+                              supabase.from('user_profiles').update(updates).eq('id', currentUser.id);
+                              updateProfile(updates);
+                              setEmployees(prev => prev.map(emp => emp.id === currentUser.id ? { ...emp, ...updates } : emp));
+                              showNotification('Name updated!', 'success');
+                            }
+                            setShowProfileSettings(false);
+                          } else if (e.key === 'Escape') {
+                            setShowProfileSettings(false);
+                            setEditingName(currentUser?.full_name || '');
+                          }
+                        }}
+                      />
+                      <button
+                        onClick={async () => {
+                          if (editingName && editingName !== currentUser?.full_name) {
+                            const updates = { full_name: editingName, updated_at: new Date().toISOString() };
+                            await supabase.from('user_profiles').update(updates).eq('id', currentUser.id);
+                            updateProfile(updates);
+                            setEmployees(prev => prev.map(emp => emp.id === currentUser.id ? { ...emp, ...updates } : emp));
+                            showNotification('Name updated!', 'success');
+                          }
+                          setShowProfileSettings(false);
+                        }}
+                        className="p-1.5 bg-[#212121] text-white rounded-lg hover:bg-[#212121]/90"
+                      >
+                        <Save className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowProfileSettings(false);
+                          setEditingName(currentUser?.full_name || '');
+                        }}
+                        className="p-1.5 bg-gray-100 text-[#212121] rounded-lg hover:bg-gray-200"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <p className="text-xs text-[#212121]/50 mt-1 ml-2">Press Enter to save, Esc to cancel</p>
+                  </div>
+                ) : (
+                  <div 
+                    className="flex items-center gap-2 mb-1 group cursor-pointer"
+                    onClick={() => {
+                      setEditingName(currentUser?.full_name || '');
+                      setShowProfileSettings(true);
+                    }}
+                  >
+                    <h2 className="text-2xl font-bold text-[#212121]">{currentUser?.full_name}</h2>
+                    <Edit2 className="w-4 h-4 text-[#212121]/30 group-hover:text-[#212121]/70 transition-colors" />
+                  </div>
+                )}
+                <p className="text-[#212121]/60">{currentUser?.email}</p>
+                <span className={`inline-block mt-2 px-3 py-1 rounded-full text-sm font-semibold text-white ${
+                  currentUser?.status === 'free' ? 'bg-[#166534]' : 
+                  currentUser?.status === 'important' ? 'bg-[#f97316]' : 
+                  'bg-[#991b1b]'
+                }`}>
+                  {currentUser?.status === 'free' ? 'Available' : 
+                   currentUser?.status === 'important' ? 'Important Only' : 
+                   'Busy'}
+                </span>
+              </div>
+            </div>
+
+            {/* Status Buttons */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <button
-                onClick={() => setShowAddModal(true)}
-                className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 flex items-center gap-2 shadow-sm transition-all"
+                onClick={() => updateStatus('free')}
+                className={`p-4 rounded-xl font-semibold transition-all ${
+                  currentUser?.status === 'free' 
+                    ? 'bg-[#166534] text-white shadow-lg' 
+                    : 'bg-gray-100 text-[#212121] hover:bg-gray-200'
+                }`}
               >
-                <Plus className="w-5 h-5" />
-                Add Employee
+                🟢 Available
+              </button>
+              <button
+                onClick={() => updateStatus('important')}
+                className={`p-4 rounded-xl font-semibold transition-all ${
+                  currentUser?.status === 'important' 
+                    ? 'bg-[#f97316] text-white shadow-lg' 
+                    : 'bg-gray-100 text-[#212121] hover:bg-gray-200'
+                }`}
+              >
+                🟠 Important Only
+              </button>
+              <button
+                onClick={() => updateStatus('busy', getEffectiveDuration())}
+                className={`p-4 rounded-xl font-semibold transition-all ${
+                  currentUser?.status === 'busy' 
+                    ? 'bg-[#991b1b] text-white shadow-lg' 
+                    : 'bg-gray-100 text-[#212121] hover:bg-gray-200'
+                }`}
+              >
+                🔴 Busy
               </button>
             </div>
 
-            <div className="space-y-3">
-              {employees.length === 0 ? (
-                <div className="text-center py-12 text-[#212121]/70">
-                  <User className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                  <p className="text-xl">No employees yet</p>
-                  <p className="text-sm mt-2">Click "Add Employee" to get started</p>
+            {/* Duration Selector - Only show when setting Busy status */}
+            {currentUser?.status === 'busy' && (
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl">
+                <label className="block text-sm font-medium text-[#991b1b] mb-2">Update Busy Duration</label>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {[15, 30, 60, 120].map(mins => (
+                    <button
+                      key={mins}
+                      onClick={() => {
+                        setBusyDuration(mins);
+                        setUseCustomDuration(false);
+                        // Auto-update when already busy
+                        updateStatus('busy', mins);
+                      }}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        !useCustomDuration && busyDuration === mins
+                          ? 'bg-[#991b1b] text-white'
+                          : 'bg-white text-[#991b1b] hover:bg-red-100 border border-red-200'
+                      }`}
+                    >
+                      {mins < 60 ? `${mins}m` : `${mins/60}h`}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setUseCustomDuration(true)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      useCustomDuration
+                        ? 'bg-[#991b1b] text-white'
+                        : 'bg-white text-[#991b1b] hover:bg-red-100 border border-red-200'
+                    }`}
+                  >
+                    Custom
+                  </button>
                 </div>
-              ) : (
-                employees.map(emp => (
-                  <div key={emp.id} className="bg-white border border-gray-200 rounded-2xl p-5 hover:bg-gray-50 transition-all shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="relative">
-                          <img 
-                            src={emp.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(emp.full_name)}`}
-                            alt={emp.full_name}
-                            className="w-16 h-16 rounded-full border-2 border-white/30 shadow-lg"
-                          />
-                          <div className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border-2 border-white ${
-                            emp.status === 'free' ? 'bg-[#166534]' : 
-                            emp.status === 'important' ? 'bg-[#f97316]' : 
-                            'bg-[#991b1b]'
-                          }`}></div>
-                        </div>
-                        <div>
-                          <h3 className="font-bold text-[#212121] text-lg">{emp.full_name}</h3>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                              emp.role === 'admin' 
-                                ? 'bg-[#212121] text-white border border-[#212121]' 
-                                : 'bg-gray-200 text-[#212121] border border-gray-300'
-                            }`}>
-                              {emp.role}
-                            </span>
-                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold text-white ${
-                              emp.status === 'free' 
-                                ? 'bg-[#166534] border border-[#166534]' 
-                                : emp.status === 'important'
-                                ? 'bg-[#f97316] border border-[#f97316]'
-                                : 'bg-[#991b1b] border border-[#991b1b]'
-                            }`}>
-                              {emp.status === 'free' ? 'Free' : 
-                               emp.status === 'important' ? 'Important Only' : 
-                               'Busy'}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setEditingEmployee(emp)}
-                          className="p-3 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-xl border border-blue-400/30 hover:border-blue-400 transition-all"
-                        >
-                          <Edit2 className="w-5 h-5" />
-                        </button>
-                        {emp.id !== currentUser.id && (
-                          <button
-                            onClick={() => deleteEmployee(emp.id)}
-                            className="p-3 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-xl border border-red-400/30 hover:border-red-400 transition-all"
-                          >
-                            <Trash2 className="w-5 h-5" />
-                          </button>
-                        )}
-                      </div>
+                {useCustomDuration && (
+                  <div className="mt-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="number"
+                        min="1"
+                        max="1440"
+                        value={customDuration}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          // Allow empty or valid numbers up to 1440
+                          if (val === '' || (parseInt(val, 10) >= 0 && parseInt(val, 10) <= 1440)) {
+                            setCustomDuration(val);
+                          }
+                        }}
+                        placeholder="Enter minutes"
+                        className="flex-1 px-4 py-2 bg-red-50/50 border border-red-200 rounded-lg focus:ring-2 focus:ring-[#991b1b]/20 focus:border-[#991b1b]/40 focus:bg-white transition-all"
+                      />
+                      <button
+                        onClick={() => {
+                          const mins = parseInt(customDuration, 10);
+                          if (mins > 0) {
+                            updateStatus('busy', Math.min(mins, MAX_BUSY_DURATION_MINUTES));
+                          }
+                        }}
+                        className="px-4 py-2 bg-[#991b1b] text-white rounded-lg hover:bg-[#991b1b]/90 font-medium text-sm"
+                      >
+                        Apply
+                      </button>
                     </div>
+                    <p className="text-red-500 text-xs mt-1.5">⚠️ Maximum duration: 24 hours (1440 minutes)</p>
+                    {durationWarning && (
+                      <p className="text-amber-600 text-sm mt-1">{durationWarning}</p>
+                    )}
                   </div>
-                ))
+                )}
+              </div>
+            )}
+
+            {/* Note Section */}
+            <div>
+              <label className="block text-sm font-medium text-[#212121] mb-2">Status Note</label>
+              <div className="flex gap-2">
+                <input
+                  ref={noteInputRef}
+                  type="text"
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  onBlur={() => {
+                    // Update the lastSyncedNote when user finishes editing
+                    lastSyncedNoteRef.current = noteText;
+                  }}
+                  placeholder="What are you working on?"
+                  className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#212121]/20 focus:border-[#212121]/30 focus:bg-white transition-all"
+                />
+                <button
+                  onClick={() => {
+                    saveNote();
+                    lastSyncedNoteRef.current = noteText;
+                  }}
+                  className="px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 font-semibold shadow-sm transition-all"
+                >
+                  <Save className="w-5 h-5" />
+                </button>
+              </div>
+              {currentUser?.status_note !== noteText && noteText !== '' && (
+                <p className="text-xs text-amber-600 mt-1">You have unsaved changes</p>
               )}
             </div>
           </div>
+
         </div>
-
-        {/* Add Employee Modal - Enhanced */}
-        {showAddModal && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={(e) => e.target === e.currentTarget && setShowAddModal(false)}>
-            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8 max-w-md w-full relative overflow-hidden">
-              {/* Decorative gradient */}
-              <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/20 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
-              
-              <div className="relative z-10">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-12 h-12 bg-[#166534] rounded-xl flex items-center justify-center shadow-lg">
-                    <Plus className="w-6 h-6 text-white" />
-                  </div>
-                  <h3 className="text-3xl font-bold text-[#212121]">Add New Employee</h3>
-                </div>
-                
-                <div className="space-y-5">
-                    <div>
-                      <label className="block text-sm font-medium text-[#212121] mb-2">Username</label>
-                      <input
-                        type="text"
-                        value={newEmployee.username}
-                        onChange={(e) => setNewEmployee({...newEmployee, username: e.target.value})}
-                        className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                        placeholder="Unique username for login"
-                      />
-                      <p className="text-xs text-[#212121]/60 mt-1">Username must be unique</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-[#212121] mb-2">Full Name</label>
-                    <input
-                      type="text"
-                      value={newEmployee.full_name}
-                      onChange={(e) => setNewEmployee({...newEmployee, full_name: e.target.value})}
-                      className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                      placeholder="Employee's full name"
-                    />
-                  </div>
-                    <div>
-                      <label className="block text-sm font-medium text-[#212121] mb-2">Password</label>
-                    <input
-                      type="password"
-                      value={newEmployee.password}
-                      onChange={(e) => setNewEmployee({...newEmployee, password: e.target.value})}
-                      className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                      placeholder="Min 6 characters"
-                    />
-                  </div>
-                    <div>
-                      <label className="block text-sm font-medium text-[#212121] mb-2">Role</label>
-                      <select
-                        value={newEmployee.role}
-                        onChange={(e) => setNewEmployee({...newEmployee, role: e.target.value})}
-                        className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                      >
-                        <option value="employee">Employee</option>
-                        <option value="admin">Admin</option>
-                      </select>
-                    </div>
-                    <div className="flex gap-3 pt-4">
-                      <button
-                        onClick={addEmployee}
-                        className="flex-1 py-3 bg-[#166534] text-white rounded-xl hover:bg-[#166534]/90 shadow-lg hover:shadow-xl transition-all transform hover:scale-105 font-semibold"
-                      >
-                        Add Employee
-                      </button>
-                    <button
-                      onClick={() => setShowAddModal(false)}
-                      className="flex-1 py-3 bg-white border border-gray-300 text-[#212121] rounded-xl hover:bg-gray-50 transition-all"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Edit Employee Modal - Enhanced */}
-        {editingEmployee && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={(e) => e.target === e.currentTarget && setEditingEmployee(null)}>
-            <div className="bg-white rounded-3xl shadow-2xl border border-gray-200 p-8 max-w-md w-full max-h-[90vh] overflow-y-auto relative overflow-hidden">
-              <div className="relative z-10">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-12 h-12 bg-[#212121] rounded-xl flex items-center justify-center shadow-lg">
-                    <Edit2 className="w-6 h-6 text-white" />
-                  </div>
-                  <h3 className="text-3xl font-bold text-[#212121]">Edit Employee</h3>
-                </div>
-                
-                <div className="space-y-5">
-                  <div>
-                    <label className="block text-sm font-medium text-[#212121] mb-2">Username</label>
-                    <input
-                      type="text"
-                      value={editingEmployee.username || ''}
-                      onChange={(e) => setEditingEmployee({...editingEmployee, username: e.target.value})}
-                      className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                      placeholder="Username"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-[#212121] mb-2">Full Name</label>
-                    <input
-                      type="text"
-                      value={editingEmployee.full_name}
-                      onChange={(e) => setEditingEmployee({...editingEmployee, full_name: e.target.value})}
-                      className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] placeholder-gray-400 focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                      placeholder="Employee's full name"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-[#212121] mb-2">Role</label>
-                    <select
-                      value={editingEmployee.role}
-                      onChange={(e) => setEditingEmployee({...editingEmployee, role: e.target.value})}
-                      className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-[#212121] focus:ring-2 focus:ring-[#212121] focus:border-[#212121] transition-all"
-                    >
-                      <option value="employee">Employee</option>
-                      <option value="admin">Admin</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-[#212121] mb-3">Avatar</label>
-                    <div className="flex items-center gap-4">
-                      <div className="relative">
-                        <div className="absolute inset-0 bg-blue-400 rounded-full blur-xl opacity-50"></div>
-                        <img 
-                          src={editingEmployee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(editingEmployee.full_name)}`}
-                          alt="Avatar"
-                          className="relative w-20 h-20 rounded-full border-4 border-white shadow-xl"
-                        />
-                      </div>
-                      <label className="cursor-pointer inline-flex items-center px-5 py-2.5 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-lg transition-all">
-                        <Upload className="w-4 h-4 mr-2" />
-                        Change Avatar
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={async (e) => {
-                            const file = e.target.files[0];
-                            if (file) {
-                              if (!file.type.startsWith('image/')) {
-                                alert('Please select an image file');
-                                return;
-                              }
-                              if (file.size > 5 * 1024 * 1024) {
-                                alert('Image size must be less than 5MB');
-                                return;
-                              }
-                              const avatarUrl = await uploadAvatar(file, editingEmployee.id);
-                              if (avatarUrl) {
-                                setEditingEmployee({...editingEmployee, avatar_url: avatarUrl});
-                              }
-                            }
-                          }}
-                          className="hidden"
-                        />
-                      </label>
-                    </div>
-                  </div>
-                  <div className="flex gap-3 pt-4">
-                    <button
-                      onClick={async () => {
-                        const updates = {
-                          username: editingEmployee.username,
-                          full_name: editingEmployee.full_name,
-                          role: editingEmployee.role
-                        };
-                        if (editingEmployee.avatar_url) {
-                          updates.avatar_url = editingEmployee.avatar_url;
-                        }
-                        await updateEmployee(editingEmployee.id, updates);
-                      }}
-                      className="flex-1 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-lg hover:shadow-xl transition-all transform hover:scale-105 font-semibold"
-                    >
-                      Save Changes
-                    </button>
-                    <button
-                      onClick={() => setEditingEmployee(null)}
-                      className="flex-1 py-3 bg-white border border-gray-300 text-[#212121] rounded-xl hover:bg-gray-50 transition-all"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     );
-  }
+  };
 
-  return null;
+  // Admin Dashboard
+  const AdminDashboard = () => (
+    <div className="min-h-screen bg-gradient-image-static p-4 md:p-8">
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000"></div>
+      </div>
+
+      <Notification notification={notification} onClose={() => setNotification(null)} />
+
+      <div className="max-w-4xl mx-auto relative z-10">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+          <div>
+            <h1 className="text-4xl md:text-5xl font-extrabold text-[#212121] mb-2">Admin Panel</h1>
+            <p className="text-[#212121]/70 text-sm">
+              Signed in as <span className="font-semibold">{currentUser?.email}</span>
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => navigate('/dashboard')}
+              className="px-4 py-2 bg-[#212121] text-white rounded-lg hover:bg-[#212121]/90 shadow-sm transition-all text-sm font-medium"
+            >
+              My Control Panel
+            </button>
+            <button
+              onClick={() => navigate('/')}
+              className="px-4 py-2 bg-[#212121] text-white rounded-lg hover:bg-[#212121]/90 shadow-sm transition-all text-sm font-medium"
+            >
+              View Dashboard
+            </button>
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 bg-[#991b1b] text-white rounded-lg hover:bg-[#991b1b]/90 flex items-center gap-2 shadow-sm transition-all text-sm font-medium"
+            >
+              <LogOut className="w-4 h-4" />
+              Logout
+            </button>
+          </div>
+        </div>
+
+        {/* Manage Employees Section - Moved Above */}
+        <div className="bg-white rounded-3xl shadow-2xl border border-gray-200 p-6 md:p-8 mb-6">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+            <h2 className="text-3xl font-bold text-[#212121]">Manage Employees</h2>
+            <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2 text-sm text-blue-700">
+              <span className="font-medium">💡 Tip:</span> Employees are added automatically when they sign in
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {employees.length === 0 ? (
+              <div className="text-center py-12 text-[#212121]/70">
+                <User className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                <p className="text-xl">No employees yet</p>
+                <p className="text-sm mt-2">Employees will appear here after signing in with Google</p>
+              </div>
+            ) : (
+              employees.map(emp => (
+                <div key={emp.id} className="bg-white border border-gray-200 rounded-2xl p-5 hover:bg-gray-50 transition-all shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="relative">
+                        <img 
+                          src={emp.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(emp.full_name)}`}
+                          alt={emp.full_name}
+                          className="w-16 h-16 rounded-full border-2 border-white/30 shadow-lg"
+                        />
+                        <div className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border-2 border-white ${
+                          emp.status === 'free' ? 'bg-[#166534]' : 
+                          emp.status === 'important' ? 'bg-[#f97316]' : 
+                          'bg-[#991b1b]'
+                        }`}></div>
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-[#212121] text-lg">{emp.full_name}</h3>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                            emp.role === 'admin' 
+                              ? 'bg-[#212121] text-white' 
+                              : 'bg-gray-200 text-[#212121]'
+                          }`}>
+                            {emp.role}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold text-white ${
+                            emp.status === 'free' ? 'bg-[#166534]' : 
+                            emp.status === 'important' ? 'bg-[#f97316]' : 
+                            'bg-[#991b1b]'
+                          }`}>
+                            {emp.status === 'free' ? 'Free' : emp.status === 'important' ? 'Important Only' : 'Busy'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setEditingEmployee(emp)}
+                        className="p-3 bg-blue-100 hover:bg-blue-200 text-blue-600 rounded-xl transition-all"
+                      >
+                        <Edit2 className="w-5 h-5" />
+                      </button>
+                      {emp.id !== currentUser?.id && (
+                        <button
+                          onClick={() => deleteEmployee(emp.id)}
+                          className="p-3 bg-red-100 hover:bg-red-200 text-red-600 rounded-xl transition-all"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Global Announcement Control - Accordion */}
+        <div className="bg-white rounded-3xl shadow-2xl border border-gray-200 mb-6 overflow-hidden">
+          <button
+            onClick={() => setIsAnnouncementOpen(!isAnnouncementOpen)}
+            className="w-full p-6 md:p-8 flex items-center justify-between hover:bg-gray-50 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">📢</span>
+              <h2 className="text-2xl font-bold text-[#212121]">Global Announcement</h2>
+            </div>
+            {isAnnouncementOpen ? (
+              <ChevronUp className="w-6 h-6 text-[#212121]" />
+            ) : (
+              <ChevronDown className="w-6 h-6 text-[#212121]" />
+            )}
+          </button>
+          
+          {isAnnouncementOpen && (
+            <div className="px-6 md:px-8 pb-6 md:pb-8">
+              <p className="text-sm text-[#212121]/60 mb-4">
+                This message will be displayed on ALL screens including the TV Dashboard. Everyone will see it instantly.
+              </p>
+              
+              <div className="space-y-4">
+            {/* Toggle Switch */}
+            <div className="flex items-center justify-between bg-gray-50 rounded-xl p-4 border border-gray-200">
+              <div>
+                <p className="font-semibold text-[#212121]">Show Announcement</p>
+                <p className="text-xs text-[#212121]/50">Turn on to display the message on all screens</p>
+              </div>
+              <button
+                onClick={async () => {
+                  const newValue = !siteSettings?.is_active;
+                  try {
+                    const { error } = await supabase
+                      .from('site_settings')
+                      .upsert({
+                        id: 'global_config',
+                        is_active: newValue,
+                        updated_at: new Date().toISOString()
+                      });
+                    if (error) throw error;
+                    setSiteSettings(prev => ({ ...prev, is_active: newValue }));
+                    showNotification(newValue ? 'Announcement is now visible!' : 'Announcement hidden', 'success');
+                  } catch (err) {
+                    console.error('Error toggling announcement:', err);
+                    showNotification('Failed to update announcement', 'error');
+                  }
+                }}
+                className={`relative w-14 h-7 rounded-full transition-colors ${
+                  siteSettings?.is_active ? 'bg-emerald-500' : 'bg-gray-300'
+                }`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow-md transition-transform ${
+                  siteSettings?.is_active ? 'translate-x-7' : 'translate-x-0'
+                }`}></span>
+              </button>
+            </div>
+            
+            {/* Message Input */}
+            <div>
+              <label className="block text-sm font-medium text-[#212121] mb-2">Announcement Message</label>
+              <textarea
+                value={siteSettings?.announcement_text || ''}
+                onChange={(e) => setSiteSettings(prev => ({ ...prev, announcement_text: e.target.value }))}
+                placeholder="Enter your announcement message..."
+                rows={3}
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#212121]/20 focus:border-[#212121]/30 focus:bg-white transition-all resize-none"
+                style={{ unicodeBidi: 'plaintext', direction: 'auto' }}
+              />
+            </div>
+            
+            {/* Update Button */}
+            <button
+              onClick={async () => {
+                try {
+                  const { error } = await supabase
+                    .from('site_settings')
+                    .upsert({
+                      id: 'global_config',
+                      announcement_text: siteSettings?.announcement_text || '',
+                      is_active: siteSettings?.is_active || false,
+                      updated_at: new Date().toISOString()
+                    });
+                  if (error) throw error;
+                  showNotification('Announcement updated successfully!', 'success');
+                } catch (err) {
+                  console.error('Error updating announcement:', err);
+                  showNotification('Failed to update announcement', 'error');
+                }
+              }}
+              className="w-full px-6 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 font-semibold transition-all flex items-center justify-center gap-2"
+            >
+              <Save className="w-5 h-5" />
+              Update Announcement
+            </button>
+            
+            {/* Preview */}
+            {siteSettings?.is_active && siteSettings?.announcement_text && (
+              <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl">
+                <p className="text-xs font-semibold text-red-600 mb-2">📺 LIVE PREVIEW:</p>
+                <div className="bg-gradient-to-r from-red-600 to-red-700 text-white py-2 px-4 rounded-lg text-center text-sm font-semibold">
+                  📢 {siteSettings.announcement_text} 📢
+                </div>
+              </div>
+            )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Edit Employee Modal */}
+      {editingEmployee && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={(e) => e.target === e.currentTarget && setEditingEmployee(null)}>
+          <div className="bg-white rounded-3xl shadow-2xl border border-gray-200 p-8 max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-12 h-12 bg-[#212121] rounded-xl flex items-center justify-center shadow-lg">
+                <Edit2 className="w-6 h-6 text-white" />
+              </div>
+              <h3 className="text-3xl font-bold text-[#212121]">Edit Employee</h3>
+            </div>
+            
+            <div className="space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-[#212121] mb-2">Email</label>
+                <input
+                  type="text"
+                  value={editingEmployee.email || ''}
+                  disabled
+                  className="w-full px-4 py-3 bg-gray-100 border border-gray-200 rounded-xl text-[#212121]/70 cursor-not-allowed"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#212121] mb-2">Full Name</label>
+                <input
+                  type="text"
+                  value={editingEmployee.full_name}
+                  onChange={(e) => setEditingEmployee({...editingEmployee, full_name: e.target.value})}
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-[#212121] focus:ring-2 focus:ring-[#212121]/20 focus:border-[#212121]/30 focus:bg-white transition-all"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#212121] mb-2">Role</label>
+                <select
+                  value={editingEmployee.role}
+                  onChange={(e) => setEditingEmployee({...editingEmployee, role: e.target.value})}
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-[#212121] focus:ring-2 focus:ring-[#212121]/20 focus:border-[#212121]/30 focus:bg-white transition-all"
+                >
+                  <option value="employee">Employee</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#212121] mb-3">Avatar</label>
+                <div className="flex items-center gap-4">
+                  <img 
+                    src={editingEmployee.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(editingEmployee.full_name)}`}
+                    alt="Avatar"
+                    className="w-20 h-20 rounded-full border-4 border-white shadow-xl"
+                  />
+                  <label className="cursor-pointer px-5 py-2.5 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-lg transition-all">
+                    <Upload className="w-4 h-4 inline mr-2" />
+                    Change Avatar
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={async (e) => {
+                        const file = e.target.files[0];
+                        if (file) {
+                          const avatarUrl = await uploadAvatar(file, editingEmployee.id);
+                          if (avatarUrl) {
+                            setEditingEmployee({...editingEmployee, avatar_url: avatarUrl});
+                          }
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => updateEmployee(editingEmployee.id, {
+                    full_name: editingEmployee.full_name,
+                    role: editingEmployee.role,
+                    ...(editingEmployee.avatar_url && { avatar_url: editingEmployee.avatar_url })
+                  })}
+                  className="flex-1 py-3 bg-[#212121] text-white rounded-xl hover:bg-[#212121]/90 shadow-lg font-semibold"
+                >
+                  Save Changes
+                </button>
+                <button
+                  onClick={() => setEditingEmployee(null)}
+                  className="flex-1 py-3 bg-gray-50 border border-gray-200 text-[#212121] rounded-xl hover:bg-gray-100 transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  // ============================================
+  // ROUTING - Persistent Shell (no flicker on refresh)
+  // ============================================
+  
+  const currentPath = location.pathname;
+  
+  // Public route - always accessible
+  if (currentPath === '/') {
+    return <AppShell siteSettings={siteSettings}>{PublicDashboard()}</AppShell>;
+  }
+  
+  // Login page
+  if (currentPath === '/login') {
+    // If already logged in with profile, redirect to dashboard
+    if (session && currentUser) {
+      return <Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />;
+    }
+    return <AppShell siteSettings={siteSettings}>{LoginPage()}</AppShell>;
+  }
+  
+  // Protected routes - /dashboard and /admin
+  if (currentPath === '/dashboard' || currentPath === '/admin') {
+    // Still checking session - show loading spinner
+    if (!initialized) {
+      return (
+        <AppShell siteSettings={siteSettings}>
+          <div className="min-h-screen bg-gradient-image-static p-8">
+            <div className="max-w-4xl mx-auto">
+              <div className="flex justify-center items-center min-h-[60vh]">
+                <ContentSpinner message="Checking session..." />
+              </div>
+            </div>
+          </div>
+        </AppShell>
+      );
+    }
+    
+    // No session at all - redirect to login
+    if (!session) {
+      return <Navigate to="/login" replace />;
+    }
+    
+    // Has session, loading or waiting for profile
+    if (profileLoading || !currentUser) {
+      return (
+        <AppShell siteSettings={siteSettings}>
+          <div className="min-h-screen bg-gradient-image-static p-8">
+            <div className="max-w-4xl mx-auto">
+              <div className="flex justify-center items-center min-h-[60vh]">
+                <ContentSpinner message="Loading your profile..." />
+              </div>
+            </div>
+          </div>
+        </AppShell>
+      );
+    }
+    
+    // Admin route requires admin role
+    if (currentPath === '/admin' && !isAdmin) {
+      return <Navigate to="/dashboard" replace />;
+    }
+    
+    // Fully authenticated - render dashboard
+    return <AppShell siteSettings={siteSettings}>{currentPath === '/admin' ? AdminDashboard() : EmployeeDashboard()}</AppShell>;
+  }
+  
+  // Catch-all
+  return <Navigate to="/" replace />;
 };
 
 export default App;
