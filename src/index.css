@@ -3,10 +3,55 @@
 @tailwind utilities;
 
 /* ============================================
-   News Ticker - Now using requestAnimationFrame in JS
-   for smooth, glitch-free scrolling with dynamic updates.
-   See NewsTicker component in App.jsx
+   TV-Optimized Broadcast Ticker
+   True infinite loop using dual-list technique
    ============================================ */
+
+/* The ticker track contains two copies of content side by side */
+/* ═══════════════════════════════════════════════════════════════
+   📐 SPEED SETTING: Change "15s" to adjust scroll speed
+      - Lower = faster (e.g., 10s = very fast)
+      - Higher = slower (e.g., 30s = slow)
+   ═══════════════════════════════════════════════════════════════ */
+.ticker-track {
+  display: flex;
+  width: fit-content;
+  animation: ticker-scroll 7s linear infinite;
+  will-change: transform;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+}
+
+/* Animation moves from 0 to -50% (first copy width) for seamless loop */
+@keyframes ticker-scroll {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+/* Pause animation on hover */
+.ticker-container:hover .ticker-track {
+  animation-play-state: paused;
+}
+
+/* Each content section takes exactly 50% of track */
+.ticker-content {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* Smooth rendering optimizations */
+.ticker-container {
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  isolation: isolate;
+}
 
 /* GPU acceleration helper for smooth transforms */
 .will-change-transform {
@@ -78,4 +123,226 @@
     0 0 20px currentColor,
     0 0 30px currentColor;
   filter: drop-shadow(0 0 4px currentColor);
+}
+
+/* ============================================
+   Smooth Page Transitions
+   ============================================ */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+.animate-slideIn {
+  animation: slideIn 0.3s ease-out forwards;
+}
+
+.animate-scaleIn {
+  animation: scaleIn 0.2s ease-out forwards;
+}
+
+/* Notification slide in */
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out forwards;
+}
+
+/* Smooth content transitions */
+.page-transition {
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* Loading skeleton */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Smooth scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
+}
+
+/* Prevent flash of unstyled content */
+.loading-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Focus visible for accessibility */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #212121;
+  outline-offset: 2px;
+}
+
+/* ============================================
+   TV Dashboard Real-time Animations
+   ============================================ */
+
+/* Shimmer effect for TV alerts */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}
+
+/* Progress bar shrink animation */
+@keyframes shrink {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+.animate-shrink {
+  animation: shrink linear forwards;
+}
+
+/* Subtle pulse for NEW badge items */
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.85; }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+/* Slide in from right for alerts */
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.5s ease-out forwards;
+}
+
+/* Bounce animation for NEW badge */
+@keyframes bounce-small {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+.animate-bounce {
+  animation: bounce-small 1s ease-in-out infinite;
+}
+
+/* Glow effect for updated items */
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(239, 68, 68, 0.5); }
+  50% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.8), 0 0 30px rgba(239, 68, 68, 0.4); }
+}
+
+.animate-glow {
+  animation: glow 2s ease-in-out infinite;
+}
+
+/* Bounce-in animation for TV alerts */
+@keyframes bounce-in {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  70% {
+    transform: scale(0.95);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-bounce-in {
+  animation: bounce-in 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
 }
