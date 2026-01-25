@@ -758,22 +758,21 @@ const App = () => {
     }
   }, []);
 
-  // Fetch prayer times from API
+  // Fetch prayer times from API for Riyadh, KSA
   const fetchPrayerTimes = useCallback(async () => {
     try {
-      const today = new Date();
-      const year = today.getFullYear();
-      const month = today.getMonth() + 1;
-      const day = today.getDate();
-      
       const response = await fetch(
-        `https://api.aladhan.com/v1/timings/${day}-${month}-${year}?latitude=31.7683&longitude=35.2137&method=4`
+        `https://api.aladhan.com/v1/timingsByAddress?address=Riyadh,KSA&method=8`
       );
       const data = await response.json();
       
       if (data.code === 200 && data.data) {
+        // Use exact times from API - no offsets
         setPrayerTimes(data.data.timings);
         setPrayerDateInfo(data.data.date);
+        console.log('🕌 Prayer times fetched for Riyadh:', data.data.timings);
+      } else {
+        console.error('Error fetching prayer times:', data);
       }
     } catch (err) {
       console.error('Error fetching prayer times:', err);
@@ -813,7 +812,7 @@ const App = () => {
     }
   }, [currentUser, updateProfile, fetchEmployees, showNotification]);
 
-  // Calculate next prayer
+  // Calculate next prayer - using exact times from API
   useEffect(() => {
     if (!prayerTimes) return;
     
@@ -825,29 +824,50 @@ const App = () => {
       { name: 'Isha', time: prayerTimes.Isha }
     ];
     
+    // Track current date to reset lastPlayedPrayer at midnight
+    let currentDate = new Date().toDateString();
+    
     const updateNextPrayer = () => {
       const now = new Date();
-      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      const nowDateString = now.toDateString();
       
+      // Reset lastPlayedPrayer if it's a new day
+      if (nowDateString !== currentDate) {
+        currentDate = nowDateString;
+        setLastPlayedPrayer(null);
+      }
+      
+      const currentHours = now.getHours();
+      const currentMinutes = now.getMinutes();
+      const currentTotalMinutes = currentHours * 60 + currentMinutes;
+      
+      // Check if current prayer time has arrived (exact minute from API)
       for (const prayer of prayers) {
         const [hours, minutes] = prayer.time.split(':').map(Number);
-        const prayerMinutes = hours * 60 + minutes;
+        const prayerTotalMinutes = hours * 60 + minutes;
         
-        if (prayerMinutes > currentMinutes) {
+        // Play Adhan at the exact minute of prayer time
+        if (prayerTotalMinutes === currentTotalMinutes && lastPlayedPrayer !== prayer.name) {
+          console.log(`🕌 Adhan time for ${prayer.name} at ${prayer.time} - playing now!`);
+          if (adhanAudioRef.current) {
+            adhanAudioRef.current.play().catch(console.error);
+          }
+          setLastPlayedPrayer(prayer.name);
+        }
+      }
+      
+      // Find next prayer
+      for (const prayer of prayers) {
+        const [hours, minutes] = prayer.time.split(':').map(Number);
+        const prayerTotalMinutes = hours * 60 + minutes;
+        
+        if (prayerTotalMinutes > currentTotalMinutes) {
           setNextPrayer(prayer);
           
-          const diffMinutes = prayerMinutes - currentMinutes;
+          const diffMinutes = prayerTotalMinutes - currentTotalMinutes;
           const hours = Math.floor(diffMinutes / 60);
           const mins = diffMinutes % 60;
           setCountdown(hours > 0 ? `${hours}h ${mins}m` : `${mins}m`);
-          
-          // Check if it's prayer time (within 1 minute)
-          if (diffMinutes <= 1 && lastPlayedPrayer !== prayer.name) {
-            if (adhanAudioRef.current) {
-              adhanAudioRef.current.play().catch(console.error);
-            }
-            setLastPlayedPrayer(prayer.name);
-          }
           
           return;
         }
@@ -856,15 +876,16 @@ const App = () => {
       // After Isha, next prayer is Fajr tomorrow
       setNextPrayer(prayers[0]);
       const [fajrH, fajrM] = prayers[0].time.split(':').map(Number);
-      const fajrMinutes = fajrH * 60 + fajrM;
-      const remaining = (24 * 60 - currentMinutes) + fajrMinutes;
+      const fajrTotalMinutes = fajrH * 60 + fajrM;
+      const remaining = (24 * 60 - currentTotalMinutes) + fajrTotalMinutes;
       const hours = Math.floor(remaining / 60);
       const mins = remaining % 60;
       setCountdown(`${hours}h ${mins}m`);
     };
     
     updateNextPrayer();
-    const interval = setInterval(updateNextPrayer, 30000);
+    // Check every 5 seconds for more accurate timing
+    const interval = setInterval(updateNextPrayer, 5000);
     return () => clearInterval(interval);
   }, [prayerTimes, lastPlayedPrayer]);
 
