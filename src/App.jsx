@@ -297,7 +297,7 @@ const NewsTicker = React.memo(({ employees, recentlyUpdated = {} }) => {
         style={{ background: 'linear-gradient(to left, rgba(255,255,255,0.9) 0%, transparent 100%)' }}
       />
       
-      {/* Marquee track - Dual-list for seamless loop */}
+      {/* Marquee track - Triple-copy for seamless infinite loop */}
       {/* 📐 PADDING: py-4 = vertical padding. Change to py-5 or py-6 for taller bar */}
       <div className="py-4">
         <div className="ticker-track flex items-center">
@@ -312,10 +312,21 @@ const NewsTicker = React.memo(({ employees, recentlyUpdated = {} }) => {
             <Separator />
           </div>
           
-          {/* Second copy */}
+          {/* Second copy - identical for seamless loop */}
           <div className="ticker-content flex items-center">
             {employeesWithNotes.map((emp, index) => (
               <React.Fragment key={`second-${emp.id}`}>
+                <NoteItem emp={emp} />
+                {index < employeesWithNotes.length - 1 && <Separator />}
+              </React.Fragment>
+            ))}
+            <Separator />
+          </div>
+          
+          {/* Third copy - ensures perfect seamless loop */}
+          <div className="ticker-content flex items-center">
+            {employeesWithNotes.map((emp, index) => (
+              <React.Fragment key={`third-${emp.id}`}>
                 <NoteItem emp={emp} />
                 {index < employeesWithNotes.length - 1 && <Separator />}
               </React.Fragment>
@@ -443,9 +454,9 @@ const EmployeeCard = React.memo(({ employee, onStatusExpired }) => {
         <div className="flex-1 min-w-0">
           <h3 className="font-bold text-white text-lg truncate">{employee.full_name}</h3>
           <div className="flex items-center gap-2 mt-1.5">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 border border-white/30 backdrop-blur-sm text-white text-sm font-medium shadow-sm">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 border border-white/30 backdrop-blur-sm text-white text-sm font-medium shadow-sm whitespace-nowrap">
               {status.text}
-              {countdown && <span className="font-mono text-white/80">• {countdown}</span>}
+              {countdown && <span className="font-mono text-white/80 text-xs">• {countdown}</span>}
             </span>
           </div>
         </div>

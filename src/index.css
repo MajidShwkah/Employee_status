@@ -7,30 +7,33 @@
    True infinite loop using dual-list technique
    ============================================ */
 
-/* The ticker track contains two copies of content side by side */
+/* The ticker track contains multiple copies of content for seamless loop */
 /* ═══════════════════════════════════════════════════════════════
-   📐 SPEED SETTING: Change "15s" to adjust scroll speed
+   📐 SPEED SETTING: Change "20s" to adjust scroll speed
       - Lower = faster (e.g., 10s = very fast)
-      - Higher = slower (e.g., 30s = slow)
+      - Higher = slower (e.g., 40s = slow)
    ═══════════════════════════════════════════════════════════════ */
 .ticker-track {
   display: flex;
-  width: fit-content;
-  animation: ticker-scroll 7s linear infinite;
+  width: max-content;
+  animation: ticker-scroll 20s linear infinite;
   will-change: transform;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
   transform: translateZ(0);
   -webkit-transform: translateZ(0);
+  /* Ensure smooth rendering */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Animation moves from 0 to -50% (first copy width) for seamless loop */
+/* Animation moves from 0 to exactly -33.333% (one-third width) for seamless loop with 3 copies */
 @keyframes ticker-scroll {
   0% {
     transform: translateX(0);
   }
   100% {
-    transform: translateX(-50%);
+    transform: translateX(-33.333%);
   }
 }
 
@@ -39,11 +42,12 @@
   animation-play-state: paused;
 }
 
-/* Each content section takes exactly 50% of track */
+/* Each content section takes exactly 33.333% of track (for 3 copies) */
 .ticker-content {
   flex-shrink: 0;
   display: flex;
   align-items: center;
+  width: fit-content;
 }
 
 /* Smooth rendering optimizations */
