@@ -23,10 +23,11 @@ export const AuthProvider = ({ children }) => {
   const [signingIn, setSigningIn] = useState(false);
   const [authError, setAuthError] = useState(null);
   const [initialized, setInitialized] = useState(false);
-  
+
   const isMountedRef = useRef(true);
-  const hasInitializedRef = useRef(false);
-  const isProcessingRef = useRef(false);
+  // Prevents duplicate profile fetches when both onAuthStateChange
+  // AND the initial getSession() call see the same session.
+  const profileFetchedForRef = useRef(null);
 
   // Validate email domain
   const isValidEmailDomain = useCallback((email) => {
@@ -36,19 +37,19 @@ export const AuthProvider = ({ children }) => {
   // Fetch user profile from user_profiles table
   const fetchUserProfile = useCallback(async (userId, userEmail, userMetadata = {}) => {
     if (!userId) return null;
-    
+
     console.log('📋 Fetching profile for user:', userId);
-    
+
     try {
       const { data: existingProfile, error: fetchError } = await supabase
         .from('user_profiles')
         .select('*')
         .eq('id', userId)
         .single();
-      
+
       if (fetchError && fetchError.code === 'PGRST116') {
         console.log('👤 Profile not found, creating new profile...');
-        
+
         const newProfile = {
           id: userId,
           email: userEmail,
@@ -60,27 +61,27 @@ export const AuthProvider = ({ children }) => {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
-        
+
         const { data: createdProfile, error: createError } = await supabase
           .from('user_profiles')
           .insert(newProfile)
           .select()
           .single();
-        
+
         if (createError) {
           console.error('❌ Error creating profile:', createError);
           return null;
         }
-        
+
         console.log('✅ Profile created:', createdProfile?.full_name);
         return createdProfile;
       }
-      
+
       if (fetchError) {
         console.error('❌ Error fetching profile:', fetchError);
         return null;
       }
-      
+
       console.log('✅ Profile fetched:', existingProfile?.full_name);
       return existingProfile;
     } catch (err) {
@@ -89,55 +90,81 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  // Process authentication - validate domain and fetch profile
-  const processAuth = useCallback(async (currentSession) => {
-    if (!currentSession?.user) {
-      return { success: false, error: 'No session' };
+  // ─────────────────────────────────────────────────────────────────────────
+  // loadProfileAsync — NEVER called with await inside onAuthStateChange.
+  //
+  // Supabase JS v2 holds an internal async lock during auth init.
+  // Awaiting a DB query inside onAuthStateChange blocks that lock → deadlock.
+  // Instead, we schedule the profile fetch to run *after* the auth event
+  // has returned, using a plain async IIFE that runs off the call stack.
+  // ─────────────────────────────────────────────────────────────────────────
+  const loadProfileAsync = useCallback((currentSession) => {
+    if (!currentSession?.user) return;
+
+    // Skip if we already fetched for this exact session user
+    const userId = currentSession.user.id;
+    if (profileFetchedForRef.current === userId) {
+      console.log('⏭️ Profile already fetched for this user, skipping');
+      return;
     }
+    profileFetchedForRef.current = userId;
 
-    // Prevent double processing
-    if (isProcessingRef.current) {
-      console.log('⏳ Already processing auth, skipping...');
-      return { success: false, error: 'Already processing' };
-    }
-    
-    isProcessingRef.current = true;
+    // Fire-and-forget: runs async, completely outside the auth event loop
+    (async () => {
+      try {
+        const { user: authUser } = currentSession;
+        console.log('🔐 Loading profile for:', authUser.email);
 
-    const { user: authUser } = currentSession;
-    console.log('🔐 Processing auth for:', authUser.email);
+        // Validate email domain
+        if (!isValidEmailDomain(authUser.email)) {
+          console.log('🚫 Invalid email domain:', authUser.email);
+          await supabase.auth.signOut();
+          if (isMountedRef.current) {
+            setAuthError(`Access Denied: Only ${ALLOWED_EMAIL_DOMAIN} emails are allowed.`);
+            setProfileLoading(false);
+            setSigningIn(false);
+            profileFetchedForRef.current = null;
+          }
+          return;
+        }
 
-    try {
-      // Validate email domain
-      if (!isValidEmailDomain(authUser.email)) {
-        console.log('🚫 Invalid email domain:', authUser.email);
-        await supabase.auth.signOut();
-        return { 
-          success: false, 
-          error: `Access Denied: Only ${ALLOWED_EMAIL_DOMAIN} emails are allowed.` 
-        };
+        if (isMountedRef.current) setProfileLoading(true);
+
+        const userProfile = await fetchUserProfile(
+          authUser.id,
+          authUser.email,
+          authUser.user_metadata
+        );
+
+        if (isMountedRef.current) {
+          if (userProfile) {
+            setProfile(userProfile);
+            setAuthError(null);
+            console.log('✅ Profile loaded:', userProfile.full_name, '| Role:', userProfile.role);
+          } else {
+            setAuthError('Failed to load user profile. Please try again.');
+            profileFetchedForRef.current = null; // allow retry
+          }
+          setProfileLoading(false);
+          setSigningIn(false);
+        }
+      } catch (err) {
+        console.error('❌ loadProfileAsync error:', err);
+        if (isMountedRef.current) {
+          setAuthError('An error occurred loading your profile.');
+          setProfileLoading(false);
+          setSigningIn(false);
+          profileFetchedForRef.current = null;
+        }
       }
-
-      const userProfile = await fetchUserProfile(
-        authUser.id, 
-        authUser.email, 
-        authUser.user_metadata
-      );
-
-      if (!userProfile) {
-        return { success: false, error: 'Failed to load user profile. Please try again.' };
-      }
-
-      return { success: true, profile: userProfile };
-    } finally {
-      isProcessingRef.current = false;
-    }
+    })();
   }, [isValidEmailDomain, fetchUserProfile]);
 
-  // Sign in with Google - uses separate signingIn state
+  // Sign in with Google
   const signInWithGoogle = useCallback(async () => {
     setAuthError(null);
-    setSigningIn(true);  // Use separate state for button
-    
+    setSigningIn(true);
+
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -149,15 +176,14 @@ export const AuthProvider = ({ children }) => {
           },
         },
       });
-      
+
       if (error) {
         console.error('❌ Google sign-in error:', error);
         setAuthError(error.message);
         setSigningIn(false);
         return { success: false, error: error.message };
       }
-      
-      // Don't set signingIn to false here - we're redirecting to Google
+
       return { success: true };
     } catch (err) {
       console.error('❌ Google sign-in exception:', err);
@@ -170,6 +196,7 @@ export const AuthProvider = ({ children }) => {
   // Sign out
   const signOut = useCallback(async () => {
     try {
+      profileFetchedForRef.current = null;
       await supabase.auth.signOut();
       if (isMountedRef.current) {
         setUser(null);
@@ -191,7 +218,7 @@ export const AuthProvider = ({ children }) => {
   // Refresh profile from database
   const refreshProfile = useCallback(async () => {
     if (!user?.id) return null;
-    
+
     const freshProfile = await fetchUserProfile(user.id, user.email, user.user_metadata);
     if (freshProfile && isMountedRef.current) {
       setProfile(freshProfile);
@@ -199,126 +226,97 @@ export const AuthProvider = ({ children }) => {
     return freshProfile;
   }, [user, fetchUserProfile]);
 
-  // Initialize auth state - SIMPLIFIED VERSION
+  // ─────────────────────────────────────────────────────────────────────────
+  // Auth Initialization
+  //
+  // Industry-standard pattern for Supabase v2:
+  //   1. Subscribe to onAuthStateChange FIRST
+  //   2. Call getSession() to handle any existing session
+  //   3. NEVER await DB queries inside the auth event callback
+  // ─────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     isMountedRef.current = true;
-    
-    // Prevent double initialization in strict mode
-    if (hasInitializedRef.current) {
-      return;
-    }
-    hasInitializedRef.current = true;
 
     console.log('🚀 Starting auth initialization...');
 
-    // Helper function to process session and load profile
-    const loadProfile = async (currentSession) => {
-      if (!currentSession?.user) return;
-      
-      console.log('📋 Loading profile for:', currentSession.user.email);
-      setProfileLoading(true);
-      
-      const result = await processAuth(currentSession);
-      
-      if (isMountedRef.current) {
-        if (result.success) {
-          setProfile(result.profile);
-          setAuthError(null);
-          console.log('✅ Profile loaded:', result.profile.full_name, '| Role:', result.profile.role);
-        } else if (result.error !== 'Already processing') {
-          console.error('❌ Profile load failed:', result.error);
-          setAuthError(result.error);
-          // Don't clear session - let user retry
-        }
-        setProfileLoading(false);
-        setSigningIn(false);
-      }
-    };
-
-    // Set up auth state change listener FIRST
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
+    // 1. Subscribe to auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, currentSession) => {
       console.log('🔔 Auth event:', event, currentSession ? '(has session)' : '(no session)');
-      
-      // Clear OAuth hash from URL
+
+      // Clear OAuth hash from URL after redirect
       if (window.location.hash?.includes('access_token')) {
         window.history.replaceState(null, '', window.location.pathname);
       }
-      
+
       if (event === 'SIGNED_OUT') {
-        setSession(null);
-        setUser(null);
-        setProfile(null);
-        setAuthError(null);
-        setLoading(false);
-        setProfileLoading(false);
-        setSigningIn(false);
-        setInitialized(true);
+        profileFetchedForRef.current = null;
+        if (isMountedRef.current) {
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          setAuthError(null);
+          setLoading(false);
+          setProfileLoading(false);
+          setSigningIn(false);
+          setInitialized(true);
+        }
         return;
       }
 
       if (event === 'TOKEN_REFRESHED' && currentSession) {
-        setSession(currentSession);
-        setUser(currentSession.user);
+        if (isMountedRef.current) {
+          setSession(currentSession);
+          setUser(currentSession.user);
+        }
         return;
       }
 
       // SIGNED_IN or INITIAL_SESSION
       if (currentSession) {
-        setSession(currentSession);
-        setUser(currentSession.user);
-        setLoading(false);
-        setInitialized(true);
-        await loadProfile(currentSession);
-      } else {
-        setSession(null);
-        setUser(null);
-        setProfile(null);
-        setLoading(false);
-        setProfileLoading(false);
-        setInitialized(true);
-      }
-    });
-
-    // THEN get existing session
-    const initAuth = async () => {
-      try {
-        console.log('📡 Checking existing session...');
-        const { data: { session: existingSession }, error } = await supabase.auth.getSession();
-        
-        if (error) {
-          console.error('❌ getSession error:', error);
-        }
-        
-        console.log('📡 Existing session:', existingSession ? 'found' : 'none');
-        
         if (isMountedRef.current) {
-          if (existingSession) {
-            setSession(existingSession);
-            setUser(existingSession.user);
-            setLoading(false);
-            setInitialized(true);
-            await loadProfile(existingSession);
-          } else {
-            setLoading(false);
-            setInitialized(true);
-          }
-        }
-      } catch (err) {
-        console.error('❌ initAuth error:', err);
-        if (isMountedRef.current) {
+          setSession(currentSession);
+          setUser(currentSession.user);
           setLoading(false);
           setInitialized(true);
         }
+        // ⚠️ DO NOT await here — fires profile fetch outside the auth lock
+        loadProfileAsync(currentSession);
+      } else {
+        if (isMountedRef.current) {
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          setLoading(false);
+          setProfileLoading(false);
+          setInitialized(true);
+        }
       }
-    };
+    });
 
-    initAuth();
+    // 2. Get any existing session (handles page refresh with stored session)
+    supabase.auth.getSession().then(({ data: { session: existingSession }, error }) => {
+      if (error) {
+        console.error('❌ getSession error:', error);
+      }
+      console.log('📡 Existing session:', existingSession ? 'found' : 'none');
+
+      // onAuthStateChange will handle INITIAL_SESSION for us.
+      // We only need to handle the case where it hasn't fired yet.
+      if (!initialized && isMountedRef.current) {
+        if (!existingSession) {
+          setLoading(false);
+          setInitialized(true);
+        }
+        // If existingSession exists, onAuthStateChange(INITIAL_SESSION) handles it.
+      }
+    });
 
     return () => {
       isMountedRef.current = false;
       subscription.unsubscribe();
     };
-  }, [processAuth]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Context value
   const value = {
