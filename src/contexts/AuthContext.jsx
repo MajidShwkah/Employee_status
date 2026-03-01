@@ -70,6 +70,8 @@ export const AuthProvider = ({ children }) => {
 
         if (createError) {
           console.error('❌ Error creating profile:', createError);
+          console.error('   Code:', createError.code, '| Message:', createError.message);
+          console.error('   Hint: Run user_profiles_setup.sql in Supabase if user_profiles table is missing or RLS blocks insert.');
           return null;
         }
 
@@ -142,7 +144,7 @@ export const AuthProvider = ({ children }) => {
             setAuthError(null);
             console.log('✅ Profile loaded:', userProfile.full_name, '| Role:', userProfile.role);
           } else {
-            setAuthError('Failed to load user profile. Please try again.');
+            setAuthError('Failed to create or load your profile. Check the browser console for details. Ensure user_profiles table exists in Supabase (run user_profiles_setup.sql).');
             profileFetchedForRef.current = null; // allow retry
           }
           setProfileLoading(false);

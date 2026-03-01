@@ -55,11 +55,12 @@ async function createAdminUser() {
 
     console.log('✅ Auth user created:', authData.user.id);
 
-    // Step 2: Create profile
+    // Step 2: Create profile in user_profiles
     const { error: profileError } = await supabaseAdmin
-      .from('profiles')
+      .from('user_profiles')
       .insert({
         id: authData.user.id,
+        email: adminUser.email,
         full_name: adminUser.full_name,
         role: adminUser.role,
         status: 'free',
